@@ -22,6 +22,7 @@ module stomResist_module
 
 ! data types
 USE nrtype
+USE globalData,only:realMissing     ! missing real number
 
 ! physical constants
 USE multiconst, only: Rgas     ! universal gas constant (J mol-1 K-1)
@@ -41,7 +42,7 @@ USE var_lookup,only:iLookDIAG           ! named variables for structure elements
 USE var_lookup,only:iLookFLUX           ! named variables for structure elements
 USE var_lookup,only:iLookFORCE          ! named variables for structure elements
 USE var_lookup,only:iLookPARAM          ! named variables for structure elements
-USE var_lookup,only:iLookDECISIONS                           ! named variables for elements of the decision structure
+USE var_lookup,only:iLookDECISIONS      ! named variables for elements of the decision structure
 
 ! look-up values for the stomatal resistance formulation
 USE mDecisions_module,only:  &
@@ -96,8 +97,7 @@ integer(i4b),parameter :: jLoc = 1   ! j-location
 ! conversion factors
 real(rkind),parameter     :: joule2umolConv=4.6_rkind   ! conversion factor from joules to umol photons (umol J-1)
 ! algorithmic parameters
-real(rkind),parameter     :: missingValue=-9999._rkind  ! missing value, used when diagnostic or state variables are undefined
-real(rkind),parameter     :: mpe=1.e-6_rkind            ! prevents overflow error if division by zero
+real(rkind),parameter     :: mpe=1.e-6_rkind            ! prevents overflow error if division by zero, from NOAH mpe value
 real(rkind),parameter     :: dx=1.e-6_rkind             ! finite difference increment
 
 contains
@@ -206,8 +206,8 @@ contains
    scalarStomResistSunlit = minStomatalResistance/scalarTranspireLim
    scalarStomResistShaded = scalarStomResistSunlit
    ! set photosynthesis to missing (not computed)
-   scalarPhotosynthesisSunlit = missingValue
-   scalarPhotosynthesisShaded = missingValue
+   scalarPhotosynthesisSunlit = realMissing
+   scalarPhotosynthesisShaded = realMissing
 
   ! *******************************************************************************************************************************************
 
@@ -266,9 +266,6 @@ contains
      case default; err=20; message=trim(message)//'unable to identify case for sunlit/shaded leaves'; return
     end select
 
-    ! print progress
-    !write(*,'(a,1x,20(f12.5,1x))') 'leafTemp, par, psn, rs = ', scalarVegetationTemp, absorbedPAR, scalarPhotosynthesis, scalarStomResist
-
    end do  ! looping through sunlit and shaded leaves
 
 
@@ -313,13 +310,6 @@ contains
   ! *******************************************************************************************************************************************
 
  end select  ! (identifying option for stomatal resistance)
-
- ! print progress
- !write(*,'(a,1x,L1,1x,20(f16.8,1x))') 'ix_StomResist==BallBerryFlex, scalarPhotosynthesisSunlit, scalarPhotosynthesisShaded, scalarStomResistSunlit, scalarPhotosynthesisShaded = ', &
- !                                      ix_StomResist==BallBerryFlex, scalarPhotosynthesisSunlit, scalarPhotosynthesisShaded, scalarStomResistSunlit, scalarPhotosynthesisShaded
- !pause
-
- ! end association to variables in the data structures
  end associate
 
  end subroutine stomResist
@@ -810,9 +800,6 @@ contains
  ! compute export limited assimilation
  xFac(ixExport) = 0.5_rkind
  xPSN(ixExport) = xFac(ixExport)*vcmax   ! umol co2 m-2 s-1
-
- ! print progress
- !write(*,'(a,1x,10(f20.10,1x))') 'xPSN, vcmax, Js = ', xPSN, vcmax, Js
 
  ! select function used for carbon assimilation
  select case(ix_bbAssimFnc)

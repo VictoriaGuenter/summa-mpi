@@ -45,9 +45,6 @@ private
 public::liquidHeadPrime
 public::d2Theta_dPsi2
 public::d2Theta_dTk2
-
-! constant parameters
-real(rkind),parameter     :: verySmall=epsilon(1.0_rkind) ! a very small number (used to avoid divide by zero)
 contains
 
 
@@ -96,14 +93,13 @@ subroutine liquidHeadPrime(&
   real(rkind)                       :: effSat                                    ! effective saturation (-)
   real(rkind)                       :: dPsiLiq_dEffSat                           ! derivative in liquid water matric potential w.r.t. effective saturation (m)
   real(rkind)                       :: dEffSat_dTemp                             ! derivative in effective saturation w.r.t. temperature (K-1)
-  real(rkind)                       :: dEffSat_dFracLiq                          ! derivative in effective saturation w.r.t. liquid water fraction (-)
   real(rkind)                       :: effSatPrime                               ! effective saturation time derivative (-)
   ! ------------------------------------------------------------------------------------------------------------------------------
   ! initialize error control
   err=0; message='liquidHeadPrime/'
 
   ! ** partially frozen soil
-  if(volFracIce > verySmall .and. matricHeadTotal < 0._rkind)then  ! check that ice exists and that the soil is unsaturated
+  if(volFracIce > epsilon(1._rkind) .and. matricHeadTotal < 0._rkind)then  ! check that ice exists and that the soil is unsaturated
 
 
     ! -----

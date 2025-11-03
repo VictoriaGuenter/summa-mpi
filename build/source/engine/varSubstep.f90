@@ -22,10 +22,11 @@ module varSubstep_module
 
 ! data types
 USE nrtype
+USE globalData,only: verySmall ! a very small number used as an additive constant to check if substantial difference among real numbers
 
 ! access missing values
 USE globalData,only:integerMissing  ! missing integer
-USE globalData,only:realMissing     ! missing double precision number
+USE globalData,only:realMissing     ! missing real number
 USE globalData,only:quadMissing     ! missing quadruple precision number
 
 ! access the global print flag
@@ -89,10 +90,6 @@ USE mDecisions_module,only:         &
 implicit none
 private
 public::varSubstep
-
-! algorithmic parameters
-real(rkind),parameter     :: verySmall=1.e-6_rkind   ! used as an additive constant to check if substantial difference among real numbers
-
 contains
 
 
@@ -677,9 +674,9 @@ USE getVectorz_module,only:varExtract                              ! extract var
   integer(i4b)                    :: ixFullVector                  ! index within full state vector
   integer(i4b)                    :: ixControlIndex                ! index within a given domain
   real(rkind)                     :: volMelt                       ! volumetric melt (kg m-3)
-  real(rkind),parameter           :: verySmall=epsilon(1._rkind)   ! a very small number (deal with precision issues)
-  real(rkind)                     :: verySmall_veg                 ! precision needs to vary based on set canopy water tolerance for IDA
-  real(rkind)                     :: verySmall_snow                ! precision needs to vary based on set snow water tolerance for IDA
+  real(rkind),parameter           :: eps=epsilon(1._rkind)         ! a very small number (deal with precision issues)
+  real(rkind)                     :: eps_veg                       ! precision needs to vary based on set canopy water tolerance for IDA
+  real(rkind)                     :: eps_snow                      ! precision needs to vary based on set snow water tolerance for IDA
   ! mass balance
   real(rkind)                     :: canopyBalance0,canopyBalance1 ! canopy storage at start/end of time step
   real(rkind)                     :: soilBalance0,soilBalance1     ! soil storage at start/end of time step
@@ -690,6 +687,7 @@ USE getVectorz_module,only:varExtract                              ! extract var
   real(rkind)                     :: superflousWat                 ! superflous water used for evaporation (kg m-2 s-1)
   real(rkind)                     :: superflousNrg                 ! superflous energy that cannot be used for evaporation (W m-2 [J m-2 s-1])
   character(LEN=256)              :: cmessage                      ! error message of downwind routine
+  logical(lgt),parameter          :: printFlag=.false.             ! flag to print water balance error information
   ! trial state variables
   real(rkind)                     :: scalarCanairTempTrial         ! trial value for temperature of the canopy air space (K)
   real(rkind)                     :: scalarCanopyTempTrial         ! trial value for temperature of the vegetation canopy (K)
@@ -788,10 +786,10 @@ USE getVectorz_module,only:varExtract                              ! extract var
     mLayerMatricHead          => prog_data%var(iLookPROG%mLayerMatricHead)%dat              ,& ! intent(inout): [dp(:)]  matric head (m)
     mLayerMatricHeadLiq       => diag_data%var(iLookDIAG%mLayerMatricHeadLiq)%dat           ,& ! intent(inout): [dp(:)]  matric potential of liquid water (m)
     ! enthalpy
-    scalarCanairEnthalpy      => diag_data%var(iLookDIAG%scalarCanairEnthalpy)%dat(1)       ,& ! intent(inout): [dp]     enthalpy of the canopy air space (J m-3)
-    scalarCanopyEnthalpy      => diag_data%var(iLookDIAG%scalarCanopyEnthalpy)%dat(1)       ,& ! intent(inout): [dp]     enthalpy of the vegetation canopy (J m-3)
+    scalarCanairEnthalpy      => prog_data%var(iLookPROG%scalarCanairEnthalpy)%dat(1)       ,& ! intent(inout): [dp]     enthalpy of the canopy air space (J m-3)
+    scalarCanopyEnthalpy      => prog_data%var(iLookPROG%scalarCanopyEnthalpy)%dat(1)       ,& ! intent(inout): [dp]     enthalpy of the vegetation canopy (J m-3)
     scalarCanopyEnthTemp      => diag_data%var(iLookDIAG%scalarCanopyEnthTemp)%dat(1)       ,& ! intent(inout): [dp]     temperature component of enthalpy of the vegetation canopy (J m-3)
-    mLayerEnthalpy            => diag_data%var(iLookDIAG%mLayerEnthalpy)%dat                ,& ! intent(inout): [dp(:)]  enthalpy of the snow+soil layers (J m-3)
+    mLayerEnthalpy            => prog_data%var(iLookPROG%mLayerEnthalpy)%dat                ,& ! intent(inout): [dp(:)]  enthalpy of the snow+soil layers (J m-3)
     mLayerEnthTemp            => diag_data%var(iLookDIAG%mLayerEnthTemp)%dat                ,& ! intent(inout): [dp(:)]  temperature component of enthalpy of the snow+soil layers (J m-3)
     ! model state variables (aquifer)
     scalarAquiferStorage      => prog_data%var(iLookPROG%scalarAquiferStorage)%dat(1)       ,& ! intent(inout): [dp(:)]  storage of water in the aquifer (m)
@@ -847,8 +845,6 @@ USE getVectorz_module,only:varExtract                              ! extract var
     call varExtract(&
                     ! input
                     stateVecTrial,             & ! intent(in):    model state vector (mixed units)
-                    diag_data,                 & ! intent(in):    model diagnostic variables for a local HRU
-                    prog_data,                 & ! intent(in):    model prognostic variables for a local HRU
                     indx_data,                 & ! intent(in):    indices defining model states and layers
                     ! output: variables for the vegetation canopy
                     scalarCanairNrgTrial,      & ! intent(inout): trial value of energy of the canopy air space, temperature (K) or enthalpy (J m-3)
@@ -891,23 +887,21 @@ USE getVectorz_module,only:varExtract                              ! extract var
     mLayerMatricHeadLiqPrime  = realMissing
     scalarAquiferStoragePrime = realMissing
 
-    ! set the default precision for the very small number
-    verySmall_veg  = verySmall*2._rkind
-    verySmall_snow = verySmall*2._rkind
+    ! set the default precision
+    eps_veg  = eps*2._rkind
+    eps_snow = eps*2._rkind
 
     select case(ixNumericalMethod)
       case(ida)
 #ifdef SUNDIALS_ACTIVE
         ! IDA precision needs to vary based on set tolerances
-        verySmall_veg = mpar_data%var(iLookPARAM%absTolWatVeg)%dat(1)*2._rkind
-        verySmall_snow = mpar_data%var(iLookPARAM%absTolWatSnow)%dat(1)*2._rkind
+        eps_veg = mpar_data%var(iLookPARAM%absTolWatVeg)%dat(1)*2._rkind
+        eps_snow = mpar_data%var(iLookPARAM%absTolWatSnow)%dat(1)*2._rkind
 
         ! extract the derivatives from the state vector
         call varExtract(&
                   ! input
                   stateVecPrime,             & ! intent(in):    derivative of model state vector (mixed units)
-                  diag_data,                 & ! intent(in):    model diagnostic variables for a local HRU
-                  prog_data,                 & ! intent(in):    model prognostic variables for a local HRU
                   indx_data,                 & ! intent(in):    indices defining model states and layers
                   ! output: variables for the vegetation canopy
                   scalarCanairNrgPrime,      & ! intent(inout): derivative of energy of the canopy air space, temperature (K s-1) or enthalpy (W m-3)
@@ -971,10 +965,10 @@ USE getVectorz_module,only:varExtract                              ! extract var
                     mLayerVolFracIceTrial,            & ! intent(inout): trial vector of volumetric ice water content (-)
                     mLayerMatricHeadTrial,            & ! intent(inout): trial vector of total water matric potential (m)
                     mLayerMatricHeadLiqTrial,         & ! intent(inout): trial vector of liquid water matric potential (m)
-                    mLayerTempPrime,                  & !
+                    mLayerTempPrime,                  & ! intent(inout): Prime vector of layer temperature (K)
                     mLayerVolFracWatPrime,            & ! intent(inout): Prime vector of volumetric total water content (-)
                     mLayerVolFracLiqPrime,            & ! intent(inout): Prime vector of volumetric liquid water content (-)
-                    mLayerVolFracIcePrime,            & !
+                    mLayerVolFracIcePrime,            & ! intent(inout): Prime vector of volumetric ice water content (-)
                     mLayerMatricHeadPrime,            & ! intent(inout): Prime vector of total water matric potential (m)
                     mLayerMatricHeadLiqPrime,         & ! intent(inout): Prime vector of liquid water matric potential (m)
                     ! output: error control
@@ -1134,15 +1128,17 @@ USE getVectorz_module,only:varExtract                              ! extract var
             fluxNet  = scalarRainfall + scalarCanopyEvaporation - scalarThroughfallRain - scalarCanopyLiqDrainage
             liqError = (canopyBalance0 + fluxNet*dt) - scalarCanopyWatTrial
             if(abs(liqError) > absConvTol_liquid*10._rkind)then  ! *10 because of precision issues
-              !write(*,'(a,1x,f20.10)') 'dt = ', dt
-              !write(*,'(a,1x,f20.10)') 'scalarCanopyWatTrial         = ', scalarCanopyWatTrial
-              !write(*,'(a,1x,f20.10)') 'canopyBalance0               = ', canopyBalance0
-              !write(*,'(a,1x,f20.10)') 'canopyBalance1               = ', canopyBalance1
-              !write(*,'(a,1x,f20.10)') 'scalarRainfall*dt            = ', scalarRainfall*dt
-              !write(*,'(a,1x,f20.10)') 'scalarCanopyLiqDrainage*dt   = ', scalarCanopyLiqDrainage*dt
-              !write(*,'(a,1x,f20.10)') 'scalarCanopyEvaporation*dt   = ', scalarCanopyEvaporation*dt
-              !write(*,'(a,1x,f20.10)') 'scalarThroughfallRain*dt     = ', scalarThroughfallRain*dt
-              !write(*,'(a,1x,f20.10)') 'liqError                     = ', liqError
+              if(printFlag)then
+                write(*,'(a,1x,f20.10)') 'dt = ', dt
+                write(*,'(a,1x,f20.10)') 'scalarCanopyWatTrial         = ', scalarCanopyWatTrial
+                write(*,'(a,1x,f20.10)') 'canopyBalance0               = ', canopyBalance0
+                write(*,'(a,1x,f20.10)') 'canopyBalance1               = ', canopyBalance1
+                write(*,'(a,1x,f20.10)') 'scalarRainfall*dt            = ', scalarRainfall*dt
+                write(*,'(a,1x,f20.10)') 'scalarCanopyLiqDrainage*dt   = ', scalarCanopyLiqDrainage*dt
+                write(*,'(a,1x,f20.10)') 'scalarCanopyEvaporation*dt   = ', scalarCanopyEvaporation*dt
+                write(*,'(a,1x,f20.10)') 'scalarThroughfallRain*dt     = ', scalarThroughfallRain*dt
+                write(*,'(a,1x,f20.10)') 'liqError                     = ', liqError
+              endif
               waterBalanceError = .true.
               return
             endif  ! if there is a water balance error
@@ -1157,14 +1153,16 @@ USE getVectorz_module,only:varExtract                              ! extract var
             compSink     = sum(mLayerCompress(1:nSoil) * mLayerDepth(nSnow+1:nLayers) )*dt ! m s-1 --> m
             liqError     = soilBalance1 - (soilBalance0 + vertFlux + tranSink - baseSink - compSink)
             if(abs(liqError) > absConvTol_liquid*10._rkind)then   ! *10 because of precision issues
-              !write(*,'(a,1x,f20.10)') 'dt = ', dt
-              !write(*,'(a,1x,f20.10)') 'soilBalance0      = ', soilBalance0
-              !write(*,'(a,1x,f20.10)') 'soilBalance1      = ', soilBalance1
-              !write(*,'(a,1x,f20.10)') 'vertFlux          = ', vertFlux
-              !write(*,'(a,1x,f20.10)') 'tranSink          = ', tranSink
-              !write(*,'(a,1x,f20.10)') 'baseSink          = ', baseSink
-              !write(*,'(a,1x,f20.10)') 'compSink          = ', compSink
-              !write(*,'(a,1x,f20.10)') 'liqError          = ', liqError
+              if(printFlag)then
+                write(*,'(a,1x,f20.10)') 'dt = ', dt
+                write(*,'(a,1x,f20.10)') 'soilBalance0      = ', soilBalance0
+                write(*,'(a,1x,f20.10)') 'soilBalance1      = ', soilBalance1
+                write(*,'(a,1x,f20.10)') 'vertFlux          = ', vertFlux
+                write(*,'(a,1x,f20.10)') 'tranSink          = ', tranSink
+                write(*,'(a,1x,f20.10)') 'baseSink          = ', baseSink
+                write(*,'(a,1x,f20.10)') 'compSink          = ', compSink
+                write(*,'(a,1x,f20.10)') 'liqError          = ', liqError
+              endif
               waterBalanceError = .true.
               return
             endif  ! if there is a water balance error
@@ -1240,7 +1238,7 @@ USE getVectorz_module,only:varExtract                              ! extract var
         ! canopy within numerical precision
         if(scalarCanopyIceTrial < 0._rkind)then
 
-          if(scalarCanopyIceTrial > -verySmall_veg)then
+          if(scalarCanopyIceTrial > -eps_veg)then
             scalarCanopyLiqTrial = scalarCanopyLiqTrial - scalarCanopyIceTrial
             scalarCanopyIceTrial = 0._rkind
 
@@ -1262,7 +1260,7 @@ USE getVectorz_module,only:varExtract                              ! extract var
           ! snow layer within numerical precision
           if(mLayerVolFracIceTrial(iState) < 0._rkind)then
 
-            if(mLayerVolFracIceTrial(iState) > -verySmall_snow)then
+            if(mLayerVolFracIceTrial(iState) > -eps_snow)then
               mLayerVolFracLiqTrial(iState) = mLayerVolFracLiqTrial(iState) - mLayerVolFracIceTrial(iState)
               mLayerVolFracIceTrial(iState) = 0._rkind
 
@@ -1293,7 +1291,7 @@ USE getVectorz_module,only:varExtract                              ! extract var
         ! canopy within numerical precision
         if(scalarCanopyLiqTrial < 0._rkind)then
 
-          if(scalarCanopyLiqTrial > -verySmall_veg)then
+          if(scalarCanopyLiqTrial > -eps_veg)then
             scalarCanopyIceTrial = scalarCanopyIceTrial - scalarCanopyLiqTrial
             scalarCanopyLiqTrial = 0._rkind
 
@@ -1315,7 +1313,7 @@ USE getVectorz_module,only:varExtract                              ! extract var
           ! snow layer within numerical precision
           if(mLayerVolFracLiqTrial(iState) < 0._rkind)then
 
-            if(mLayerVolFracLiqTrial(iState) > -verySmall_snow)then
+            if(mLayerVolFracLiqTrial(iState) > -eps_snow)then
               mLayerVolFracIceTrial(iState) = mLayerVolFracIceTrial(iState) - mLayerVolFracLiqTrial(iState)
               mLayerVolFracLiqTrial(iState) = 0._rkind
 

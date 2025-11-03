@@ -25,12 +25,9 @@ USE, intrinsic :: iso_c_binding
 USE nrtype
 USE type4kinsol
 
-! access the global print flag
-USE globalData,only:globalPrintFlag
-
 ! access missing values
 USE globalData,only:integerMissing  ! missing integer
-USE globalData,only:realMissing     ! missing double precision number
+USE globalData,only:realMissing     ! missing real number
 
 ! access matrix information
 USE globalData,only: ixFullMatrix   ! named variable for the full Jacobian matrix
@@ -205,7 +202,6 @@ subroutine summaSolve4kinsol(&
   logical(lgt)                      :: feasible             ! feasibility flag
   integer(c_long)                   :: mu, lu               ! in banded matrix mode in SUNDIALS type
   integer(c_long)                   :: nState               ! total number of state variables in SUNDIALS type
-  integer(i4b)                      :: iVar, i              ! indices
   character(LEN=256)                :: cmessage             ! error message of downwind routine
   logical(lgt)                      :: use_fdJac            ! flag to use finite difference Jacobian, controlled by decision fDerivMeth
   logical(lgt),parameter            :: offErrWarnMessage = .true.   ! flag to turn IDA warnings off, default true
@@ -350,7 +346,8 @@ subroutine summaSolve4kinsol(&
   ! check if KINSol failed
   if( retvalr < 0 )then
     kinsolSucceeds = .false.
-    call getErrMessage(retvalr,cmessage)
+    if (eqns_data%err/=0)then; message=trim(message)//trim(eqns_data%message); return; endif !fail from summa problem
+    call getErrMessage(retvalr,cmessage) ! fail from solver problem
     message=trim(message)//trim(cmessage)
     if(retvalr==-6) err = -20 ! max iterations failure, exit and reduce the data window time in varSubStep
   else

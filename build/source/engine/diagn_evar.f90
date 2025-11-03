@@ -22,6 +22,7 @@ module diagn_evar_module
 
 ! data types
 USE nrtype
+USE globalData,only:realMissing               ! missing real number
 
 ! derived types to define the data structures
 USE data_types,only:&
@@ -71,12 +72,6 @@ USE mDecisions_module,only: funcSoilWet, & ! function of soil wetness
 implicit none
 private
 public::diagn_evar
-
-! algorithmic parameters
-real(rkind),parameter     :: valueMissing=-9999._rkind  ! missing value, used when diagnostic or state variables are undefined
-real(rkind),parameter     :: verySmall=1.e-6_rkind   ! used as an additive constant to check if substantial difference among real numbers
-real(rkind),parameter     :: mpe=1.e-6_rkind         ! prevents overflow error if division by zero
-real(rkind),parameter     :: dx=1.e-6_rkind          ! finite difference increment
 contains
 
 
@@ -183,7 +178,7 @@ contains
                             Cp_water*scalarCanopyLiquid/canopyDepth       + & ! liquid water component
                             Cp_ice*scalarCanopyIce/canopyDepth                ! ice component
  else
-  scalarBulkVolHeatCapVeg = valueMissing
+  scalarBulkVolHeatCapVeg = realMissing
  end if
 
 
@@ -288,8 +283,7 @@ contains
    ! * error check
    case default; err=20; message=trim(message)//'unable to identify type of layer (snow or soil) to compute thermal conductivity'; return
 
-  end select
-  !print*, 'iLayer, mLayerThermalC(iLayer) = ', iLayer, mLayerThermalC(iLayer)
+   end select
 
  end do  ! looping through layers
 
@@ -309,7 +303,6 @@ contains
   else
    iLayerThermalC(iLayer) = (TCn*zdn +  TCp*zdp) / (zdn + zdp)
   endif
-  !write(*,'(a,1x,i4,1x,10(f9.3,1x))') 'iLayer, TCn, TCp, zdn, zdp, iLayerThermalC(iLayer) = ', iLayer, TCn, TCp, zdn, zdp, iLayerThermalC(iLayer)
  end do  ! looping through layers
 
  ! special case of hansson

@@ -52,10 +52,9 @@ contains
  ! used to read model initial conditions
  USE summaFileManager,only:SETTINGS_PATH             ! path for metadata files
  USE summaFileManager,only:PARAMETER_TRIAL           ! file with parameter trial values
- USE get_ixname_module,only:get_ixparam,get_ixbpar   ! access function to find index of elements in structure
+ USE get_ixname_module,only:get_ixParam,get_ixBpar   ! access function to find index of elements in structure
  USE globalData,only:index_map,gru_struc             ! mapping from global HRUs to the elements in the data structures
  USE var_lookup,only:iLookPARAM,iLookTYPE,iLookID    ! named variables to index elements of the data vectors
- USE MPI
  implicit none
  ! define input
  integer(i4b),        intent(in)       :: iRunMode         ! run mode
@@ -90,16 +89,14 @@ contains
  integer(i4b)                          :: idim_list(2)     ! list of dimension ids
  ! data in the netcdf file
  integer(i4b)                          :: parLength        ! length of the parameter data
- integer(8),allocatable                :: hruId(:)         ! HRU identifier in the file
- real(rkind),allocatable                  :: parVector(:)     ! model parameter vector
+ integer(i8b),allocatable              :: hruId(:)         ! HRU identifier in the file
+ real(rkind),allocatable               :: parVector(:)     ! model parameter vector
  logical                               :: fexist           ! inquire whether the parmTrial file exists
  integer(i4b)                          :: fHRU             ! index of HRU in input file
 
- integer:: nHRU_comm_world, nGRU_comm_world, mpi_err,  num_rank, idx_rank, iRunMode_mpi
  ! Start procedure here
  err=0; message="read_param/"
- call MPI_Comm_size(MPI_COMM_WORLD, num_rank, mpi_err)
- call MPI_Comm_rank(MPI_COMM_WORLD, idx_rank, mpi_err)
+
  ! **********************************************************************************************
  ! * open files, etc.
  ! **********************************************************************************************
@@ -145,38 +142,22 @@ contains
   err=20; return
  endif
 
- !-----------------
- !
- ! MPI: this checking should be against common world values
- !
- !------------------
- !call MPI_Reduce(nHRU, nHRU_comm_world, 1, MPI_INTEGER, MPI_SUM, 0, MPI_COMM_WORLD, mpi_err)
- call MPI_Allreduce(nHRU, nHRU_comm_world, 1, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, mpi_err)
- call MPI_Bcast(nHRU_comm_world, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, mpi_err)
-
-
- iRunMode_mpi = iRunMode
-
- if ((iRunMode==iRunModeFull).and.(num_rank>1)) then 
-    iRunMode_mpi = iRunModeGRU
- end if 
-
  ! check have the correct number of HRUs
- if ((iRunMode_mpi==irunModeFull).and.(nHRU_file/=nHRU)) then
+ if ((irunMode==irunModeFull).and.(nHRU_file/=nHRU)) then
   message=trim(message)//'incorrect number of HRUs in file '//trim(infile)
   err=20; return
  endif
- if ((iRunMode_mpi==irunModeHRU).and.(nHRU_file<checkHRU)) then
+ if ((irunMode==irunModeHRU).and.(nHRU_file<checkHRU)) then
   message=trim(message)//'not enough HRUs in file '//trim(infile)
   err=20; return
  endif
 
  ! check have the correct number of GRUs
- if ((iRunMode_mpi==irunModeGRU).and.(nGRU_file<startGRU).and.(nGRU_file/=integerMissing)) then
+ if ((irunMode==irunModeGRU).and.(nGRU_file<startGRU).and.(nGRU_file/=integerMissing)) then
   message=trim(message)//'not enough GRUs in file '//trim(infile)
   err=20; return
  endif
- if ((iRunMode_mpi==irunModeFull).and.(nGRU_file/=nGRU).and.(nGRU_file/=integerMissing)) then
+ if ((irunMode==irunModeFull).and.(nGRU_file/=nGRU).and.(nGRU_file/=integerMissing)) then
   message=trim(message)//'incorrect number of GRUs in file '//trim(infile)
   err=20; return
  endif
@@ -200,7 +181,7 @@ contains
    if(err/=0)then; message=trim(message)//trim(cmessage); return; end if
 
    ! check HRUs  -- expect HRUs to be in the same order as the local attributes
-   if (iRunMode_mpi==iRunModeFull) then
+   if (iRunMode==iRunModeFull) then
     do iHRU=1,nHRU
      iGRU=index_map(iHRU)%gru_ix
      localHRU_ix=index_map(iHRU)%localHRU_ix
@@ -210,7 +191,7 @@ contains
      endif
     end do  ! looping through HRUs
 
-   else if (iRunMode_mpi==iRunModeGRU) then
+   else if (iRunMode==iRunModeGRU) then
     do iHRU=1,nHRU
      iGRU=index_map(iHRU)%gru_ix
      localHRU_ix=index_map(iHRU)%localHRU_ix
@@ -221,11 +202,11 @@ contains
     endif
    enddo
 
-   else if (iRunMode_mpi==iRunModeHRU) then
+   else if (iRunMode==iRunModeHRU) then
     iGRU=index_map(1)%gru_ix
     localHRU_ix=index_map(1)%localHRU_ix
     if(hruId(checkHRU)/=idStruct%gru(iGRU)%hru(localHRU_ix)%var(iLookID%hruId))then
-     write(message,'(a,i0,a,i0,a)') trim(message)//'mismatch for HRU ', idStruct%gru(iGRU)%hru(localHRU_ix)%var(iLookID%hruId), '(param HRU = ', hruId(iHRU), ')'
+     write(message,'(a,i0,a,i0,a)') trim(message)//'mismatch for HRU ', idStruct%gru(iGRU)%hru(localHRU_ix)%var(iLookID%hruId), '(param HRU = ', hruId(checkHRU), ')'
      err=20; return
     endif
 
@@ -250,7 +231,7 @@ contains
   call netcdf_err(err,message); if (err/=0) then; err=20; return; end if
 
   ! get the local parameters
-  ixParam = get_ixparam( trim(parName) )
+  ixParam = get_ixParam( trim(parName) )
   if(ixParam/=integerMissing)then
 
    ! **********************************************************************************************
@@ -336,7 +317,7 @@ contains
   else
 
    ! get the parameter index
-   ixParam = get_ixbpar( trim(parName) )
+   ixParam = get_ixBpar( trim(parName) )
 
    ! allow extra variables in the file that are not used
    if(ixParam==integerMissing) cycle
@@ -353,15 +334,15 @@ contains
    if(err/=0)then; message=trim(message)//trim(cmessage); return; end if
 
    ! populate parameter structures
-   if (iRunMode_mpi==iRunModeGRU) then
+   if (iRunMode==iRunModeGRU) then
     do iGRU=1,nGRU
      bparStruct%gru(iGRU)%var(ixParam) = parVector(iGRU+startGRU-1)
     end do  ! looping through GRUs
-   else if (iRunMode_mpi==iRunModeFull) then
+   else if (iRunMode==iRunModeFull) then
     do iGRU=1,nGRU
      bparStruct%gru(iGRU)%var(ixParam) = parVector(iGRU)
     end do  ! looping through GRUs
-   else if (iRunMode_mpi==iRunModeHRU) then
+   else if (iRunMode==iRunModeHRU) then
     err = 20; message='checkHRU run mode not working'; return;
    endif
 
@@ -375,6 +356,13 @@ contains
   endif  ! reading the basin parameters
 
  end do ! (looping through the parameters in the NetCDF file)
+
+  ! close the NetCDF file
+ call nc_file_close(ncid,err,cmessage)
+ if(err/=0)then
+  message=trim(message)//'problem closing parameter file '//trim(infile)//': '//trim(cmessage)
+  err=20; return
+ endif
 
  end subroutine read_param
 

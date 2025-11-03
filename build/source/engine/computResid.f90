@@ -97,8 +97,8 @@ subroutine computResid(&
                       mLayerVolFracWatTrial,     & ! intent(in):  trial value for the volumetric water in each snow and soil layer (-)
                       mLayerVolFracLiqTrial,     & ! intent(in):  trial value for the volumetric liq in each snow and soil layer (-)
                       ! input: enthalpy terms
-                      scalarCanopyCmTrial,       & ! intent(in):  Cm of vegetation canopy (J kg K-1)
-                      mLayerCmTrial,             & ! intent(in):  Cm of each snow and soil layer (J kg K-1)
+                      scalarCanopyCmTrial,       & ! intent(in):  Cm for vegetation canopy (J kg K-1)
+                      mLayerCmTrial,             & ! intent(in):  Cm for each snow and soil layer (J kg K-1)
                       scalarCanairEnthalpyTrial, & ! intent(in):  trial value for  enthalpy of the canopy air space (J m-3)
                       scalarCanopyEnthTempTrial, & ! intent(in):  trial value for temperature component of enthalpy of the vegetation canopy (J m-3)
                       mLayerEnthTempTrial,       & ! intent(in):  trial vector of temperature component of enthalpy of each snow+soil layer (J m-3)  
@@ -135,8 +135,8 @@ subroutine computResid(&
   real(rkind),intent(in)             :: mLayerVolFracWatTrial(:)  ! trial value for the volumetric water in each snow and soil layer (-)
   real(rkind),intent(in)             :: mLayerVolFracLiqTrial(:)  ! trial value for the volumetric water in each snow and soil layer (-)
   ! input: enthalpy terms
-  real(qp),intent(in)                :: scalarCanopyCmTrial       ! Cm of vegetation canopy (-)
-  real(qp),intent(in)                :: mLayerCmTrial(:)          ! Cm of each snow and soil layer (-)
+  real(rkind),intent(in)             :: scalarCanopyCmTrial       ! Cm for vegetation canopy (-)
+  real(rkind),intent(in)             :: mLayerCmTrial(:)          ! Cm for each snow and soil layer (-)
   real(rkind),intent(in)             :: scalarCanairEnthalpyTrial ! trial value for enthalpy of the canopy air space (J m-3)
   real(rkind),intent(in)             :: scalarCanopyEnthTempTrial ! trial value for temperature component of enthalpy of the vegetation canopy (J m-3)
   real(rkind),intent(in)             :: mLayerEnthTempTrial(:)    ! trial vector of temperature component of enthalpy of each snow+soil layer (J m-3)
@@ -175,7 +175,7 @@ subroutine computResid(&
     mLayerVolFracLiq        => prog_data%var(iLookPROG%mLayerVolFracLiq)%dat          ,& ! intent(in): [dp(:)]  volumetric fraction of liquid water (-)
     mLayerVolFracWat        => prog_data%var(iLookPROG%mLayerVolFracWat)%dat          ,& ! intent(in): [dp(:)]  volumetric fraction of total water (-)
     ! enthalpy terms
-    scalarCanairEnthalpy    => diag_data%var(iLookDIAG%scalarCanairEnthalpy)%dat(1)   ,& ! intent(in): [dp]     enthalpy of the canopy air space (J m-3)
+    scalarCanairEnthalpy    => prog_data%var(iLookPROG%scalarCanairEnthalpy)%dat(1)   ,& ! intent(in): [dp]     enthalpy of the canopy air space (J m-3)
     scalarCanopyEnthTemp    => diag_data%var(iLookDIAG%scalarCanopyEnthTemp)%dat(1)   ,& ! intent(in): [dp]     temperature component of enthalpy of the vegetation canopy (J m-3)
     mLayerEnthTemp          => diag_data%var(iLookDIAG%mLayerEnthTemp)%dat            ,& ! intent(in): [dp(:)]  temperature component of enthalpy of the snow+soil layers (J m-3)
     ! model state variables (aquifer)
@@ -289,18 +289,37 @@ subroutine computResid(&
     ! compute the residual vector for the aquifer
     if(ixAqWat/=integerMissing) rVec(ixAqWat) = sMul(ixAqWat)*( scalarAquiferStorageTrial - scalarAquiferStorage ) - ( fVec(ixAqWat)*dt + rAdd(ixAqWat) )
 
+    ! print the state variables if requested
     if(globalPrintFlag)then
-      write(*,'(a,1x,100(e12.5,1x))') 'rVec = ', rVec(min(iJac1,size(rVec)):min(iJac2,size(rVec)))
-      write(*,'(a,1x,100(e12.5,1x))') 'fVec = ', fVec(min(iJac1,size(rVec)):min(iJac2,size(rVec)))
+      write(*,'(a)') 'In computResid:'
+      write(*,'(a,i4)') '  nSnow = ', nSnow
+      write(*,'(a,i4)') '  nSoil = ', nSoil
+      write(*,'(a,i4)') '  nLayers = ', nLayers
+      write(*,'(a,f12.5)') '  dt = ', dt
+      write(*,'(a,1x,100(e12.5,1x))') '  sMul = ', sMul(min(iJac1,size(sMul)):min(iJac2,size(sMul)))
+      write(*,'(a,1x,100(e12.5,1x))') '  fVec = ', fVec(min(iJac1,size(fVec)):min(iJac2,size(fVec)))
+      write(*,'(a,f12.5)') '  scalarCanairTempTrial = ', scalarCanairTempTrial
+      write(*,'(a,f12.5)') '  scalarCanopyTempTrial = ', scalarCanopyTempTrial
+      write(*,'(a,f12.5)') '  scalarCanopyWatTrial = ', scalarCanopyWatTrial
+      write(*,'(a,1x,100(e12.5,1x))') '  mLayerTempTrial = ', mLayerTempTrial(min(iJac1,size(mLayerTempTrial)):min(iJac2,size(mLayerTempTrial)))
+      write(*,'(a,f12.5)') '  scalarAquiferStorageTrial = ', scalarAquiferStorageTrial
+      write(*,'(a,f12.5)') '  scalarCanopyIceTrial = ', scalarCanopyIceTrial
+      write(*,'(a,f12.5)') '  scalarCanopyLiqTrial = ', scalarCanopyLiqTrial
+      write(*,'(a,1x,100(e12.5,1x))') '  mLayerVolFracIceTrial = ', mLayerVolFracIceTrial(min(iJac1,size(mLayerVolFracIceTrial)):min(iJac2,size(mLayerVolFracIceTrial)))
+      write(*,'(a,1x,100(e12.5,1x))') '  mLayerVolFracWatTrial = ', mLayerVolFracWatTrial(min(iJac1,size(mLayerVolFracWatTrial)):min(iJac2,size(mLayerVolFracWatTrial)))
+      write(*,'(a,1x,100(e12.5,1x))') '  mLayerVolFracLiqTrial = ', mLayerVolFracLiqTrial(min(iJac1,size(mLayerVolFracLiqTrial)):min(iJac2,size(mLayerVolFracLiqTrial)))
+      write(*,'(a,f12.5)') '  scalarCanopyCmTrial = ', scalarCanopyCmTrial
+      write(*,'(a,1x,100(e12.5,1x))') '  mLayerCmTrial = ', mLayerCmTrial(min(iJac1,size(mLayerCmTrial)):min(iJac2,size(mLayerCmTrial)))
+      write(*,'(a,f12.5)') '  scalarCanairEnthalpyTrial = ', scalarCanairEnthalpyTrial 
+      write(*,'(a,f12.5)') '  scalarCanopyEnthTempTrial = ', scalarCanopyEnthTempTrial
+      write(*,'(a,1x,100(e12.5,1x))') '  mLayerEnthTempTrial = ', mLayerEnthTempTrial(min(iJac1,size(mLayerEnthTempTrial)):min(iJac2,size(mLayerEnthTempTrial)))
     endif
 
-    ! check
-    if(any(isNan(rVec)))then
-      message=trim(message)//'vector of residuals contains NaN value(s) ' ! formerly known as the Indian bread error
+    if(globalPrintFlag .or. any(isNan(rVec)))then
       write(*,'(a,1x,100(e12.5,1x))') 'rVec = ', rVec(min(iJac1,size(rVec)):min(iJac2,size(rVec)))
       write(*,'(a,1x,100(e12.5,1x))') 'fVec = ', fVec(min(iJac1,size(rVec)):min(iJac2,size(rVec)))
-      err=20; return
     endif
+    if(any(isNan(rVec)))then; message=trim(message)//'NaN in residuals'; err=20; return; endif
 
   end associate
 

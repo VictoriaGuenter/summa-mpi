@@ -162,7 +162,7 @@ contains
  implicit none
  ! input: model control
  real(rkind),intent(in)                 :: dt                         ! time step (seconds)
- logical(lgt),intent(in)             :: snowLayers                 ! logical flag if snow layers exist
+ logical(lgt),intent(in)                :: snowLayers                 ! logical flag if snow layers exist
  real(rkind),intent(in)                 :: fc_param                   ! freeezing curve parameter for snow (K-1)
  ! input: diagnostic scalar variables
  real(rkind),intent(in)                 :: scalarSnowfallTemp         ! computed temperature of fresh snow (K)
@@ -177,8 +177,8 @@ contains
  real(rkind),intent(inout)              :: surfaceLayerVolFracIce     ! volumetric fraction of ice in surface layer (-)
  real(rkind),intent(inout)              :: surfaceLayerVolFracLiq     ! volumetric fraction of liquid water in surface layer (-)
  ! output: error control
- integer(i4b),intent(out)            :: err                        ! error code
- character(*),intent(out)            :: message                    ! error message
+ integer(i4b),intent(out)               :: err                        ! error code
+ character(*),intent(out)               :: message                    ! error message
  ! define local variables
  real(rkind)                            :: newSnowfall                ! new snowfall -- throughfall and unloading (kg m-2 s-1)
  real(rkind)                            :: newSnowDepth               ! new snow depth (m)
@@ -191,7 +191,7 @@ contains
  real(rkind)                            :: tempSWE0                   ! temporary SWE before snowfall, used to check mass balance (kg m-2)
  real(rkind)                            :: tempSWE1                   ! temporary SWE after snowfall, used to check mass balance (kg m-2)
  real(rkind)                            :: xMassBalance               ! mass balance check (kg m-2)
- real(rkind),parameter                  :: verySmall=1.e-8_rkind         ! a very small number -- used to check mass balance
+ real(rkind),parameter                  :: massBalTol=1.e-8_rkind     ! tolerance for mass balance check (kg m-2)
  ! initialize error control
  err=0; message="newsnwfall/"
 
@@ -220,9 +220,6 @@ contains
   totalMassIceSurfLayer  = iden_ice*surfaceLayerVolFracIce*surfaceLayerDepth + newSnowfall*dt
   ! get the total snow depth
   totalDepthSurfLayer    = surfaceLayerDepth + newSnowDepth
-  !write(*,'(a,1x,10(f20.10,1x))') 'scalarSnowfallTemp, surfaceLayerTemp, newSnowDepth, surfaceLayerDepth, tempSWE0, totalMassIceSurfLayer/totalDepthSurfLayer = ', &
-  !                                 scalarSnowfallTemp, surfaceLayerTemp, newSnowDepth, surfaceLayerDepth, tempSWE0, totalMassIceSurfLayer/totalDepthSurfLayer
-
   ! compute the new temperature
   surfaceLayerTemp       = (surfaceLayerTemp*surfaceLayerDepth + scalarSnowfallTemp*newSnowDepth) / totalDepthSurfLayer
   ! compute new SWE for the upper layer (kg m-2)
@@ -240,7 +237,7 @@ contains
 
   ! check SWE
   xMassBalance = tempSWE1 - (tempSWE0 + newSnowfall*dt)
-  if (abs(xMassBalance) > verySmall)then
+  if (abs(xMassBalance) > massBalTol)then
    write(*,'(a,1x,f20.10)') 'SWE mass balance = ', xMassBalance
    message=trim(message)//'mass balance problem'
    err=20; return

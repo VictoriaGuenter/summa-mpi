@@ -30,20 +30,20 @@ USE data_types,only:&
                     ilength,             & ! var%dat
                     ! no spatial dimension
                     var_i,               & ! x%var(:)            (i4b)
-                    var_i8,              & ! x%var(:)            integer(8)
+                    var_i8,              & ! x%var(:)            (i8b)
                     var_d,               & ! x%var(:)            (rkind)
                     var_flagVec,         & ! x%var(:)%dat        (logical)
                     var_ilength,         & ! x%var(:)%dat        (i4b)
                     var_dlength,         & ! x%var(:)%dat        (rkind)
                     ! gru dimension
                     gru_int,             & ! x%gru(:)%var(:)     (i4b)
-                    gru_int8,            & ! x%gru(:)%var(:)     integer(8)
+                    gru_int8,            & ! x%gru(:)%var(:)     (i8b)
                     gru_double,          & ! x%gru(:)%var(:)     (rkind)
                     gru_intVec,          & ! x%gru(:)%var(:)%dat (i4b)
                     gru_doubleVec,       & ! x%gru(:)%var(:)%dat (rkind)
                     ! gru+hru dimension
                     gru_hru_int,         & ! x%gru(:)%hru(:)%var(:)     (i4b)
-                    gru_hru_int8,        & ! x%gru(:)%hru(:)%var(:)     integer(8)
+                    gru_hru_int8,        & ! x%gru(:)%hru(:)%var(:)     (i8b)
                     gru_hru_double,      & ! x%gru(:)%hru(:)%var(:)     (rkind)
                     gru_hru_intVec,      & ! x%gru(:)%hru(:)%var(:)%dat (i4b)
                     gru_hru_doubleVec,   & ! x%gru(:)%hru(:)%var(:)%dat (rkind)
@@ -55,10 +55,10 @@ USE data_types,only:var_info               ! data type for metadata
 
 ! access missing values
 USE globalData,only:integerMissing         ! missing integer
-USE globalData,only:realMissing            ! missing double precision number
+USE globalData,only:realMissing            ! missing real number
 
 USE globalData,only: nTimeDelay            ! number of timesteps in the time delay histogram
-USE globalData,only: nBand                 ! number of spectral bands
+USE globalData,only: nSpecBand             ! number of spectral bands
 
 ! access variable types
 USE var_lookup,only:iLookVarType           ! look up structure for variable typed
@@ -572,7 +572,7 @@ contains
   else
    select case(metadata(iVar)%vartype)
     case(iLookVarType%scalarv); allocate(varData%var(iVar)%dat(1),stat=err)
-    case(iLookVarType%wLength); allocate(varData%var(iVar)%dat(nBand),stat=err)
+    case(iLookVarType%wLength); allocate(varData%var(iVar)%dat(nSpecBand),stat=err)
     case(iLookVarType%midSnow); allocate(varData%var(iVar)%dat(nSnow),stat=err)
     case(iLookVarType%midSoil); allocate(varData%var(iVar)%dat(nSoil),stat=err)
     case(iLookVarType%midToto); allocate(varData%var(iVar)%dat(nLayers),stat=err)
@@ -638,7 +638,7 @@ contains
   else
    select case(metadata(iVar)%vartype)
     case(iLookVarType%scalarv); allocate(varData%var(iVar)%dat(1),stat=err)
-    case(iLookVarType%wLength); allocate(varData%var(iVar)%dat(nBand),stat=err)
+    case(iLookVarType%wLength); allocate(varData%var(iVar)%dat(nSpecBand),stat=err)
     case(iLookVarType%midSnow); allocate(varData%var(iVar)%dat(nSnow),stat=err)
     case(iLookVarType%midSoil); allocate(varData%var(iVar)%dat(nSoil),stat=err)
     case(iLookVarType%midToto); allocate(varData%var(iVar)%dat(nLayers),stat=err)
@@ -701,7 +701,7 @@ contains
   else
    select case(metadata(iVar)%vartype)
     case(iLookVarType%scalarv); allocate(varData%var(iVar)%dat(1),stat=err)
-    case(iLookVarType%wLength); allocate(varData%var(iVar)%dat(nBand),stat=err)
+    case(iLookVarType%wLength); allocate(varData%var(iVar)%dat(nSpecBand),stat=err)
     case(iLookVarType%midSnow); allocate(varData%var(iVar)%dat(nSnow),stat=err)
     case(iLookVarType%midSoil); allocate(varData%var(iVar)%dat(nSoil),stat=err)
     case(iLookVarType%midToto); allocate(varData%var(iVar)%dat(nLayers),stat=err)

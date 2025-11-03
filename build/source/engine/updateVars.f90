@@ -181,7 +181,6 @@ subroutine updateVars(&
   real(rkind)                        :: scalarVolFracIce                ! volumetric fraction of ice (-)
   real(rkind)                        :: Tcrit                           ! critical soil temperature below which ice exists (K)
   real(rkind)                        :: xTemp                           ! temporary temperature (K)
-  real(rkind)                        :: fLiq                            ! fraction of liquid water (-)
   real(rkind)                        :: effSat                          ! effective saturation (-)
   real(rkind)                        :: avPore                          ! available pore space (-)
   character(len=256)                 :: cMessage                        ! error message of downwind routine
@@ -257,6 +256,8 @@ subroutine updateVars(&
     dPsiLiq_dTemp           => deriv_data%var(iLookDERIV%dPsiLiq_dTemp   )%dat        ,& ! intent(out): [dp(:)]  derivative in the liquid water matric potential w.r.t. temperature
     mLayerdTheta_dTk        => deriv_data%var(iLookDERIV%mLayerdTheta_dTk)%dat        ,& ! intent(out): [dp(:)]  derivative of volumetric liquid water content w.r.t. temperature
     dTheta_dTkCanopy        => deriv_data%var(iLookDERIV%dTheta_dTkCanopy)%dat(1)     ,& ! intent(out): [dp]     derivative of volumetric liquid water content w.r.t. temperature
+    dFracLiqWat_dTk        => deriv_data%var(iLookDERIV%dFracLiqWat_dTk)%dat          ,& ! intent(out): [dp(:)]  derivative in fraction of liquid water w.r.t. temperature
+    dFracLiqVeg_dTkCanopy   => deriv_data%var(iLookDERIV%dFracLiqVeg_dTkCanopy)%dat(1),& ! intent(out): [dp   ]  derivative in fraction of (throughfall + drainage) w.r.t. temperature
     ! derivatives inside solver for Jacobian only
     mLayerdTemp_dt          => deriv_data%var(iLookDERIV%mLayerdTemp_dt )%dat         ,& ! intent(out): [dp(:)]  timestep change in layer temperature
     scalarCanopydTemp_dt    => deriv_data%var(iLookDERIV%scalarCanopydTemp_dt)%dat(1) ,& ! intent(out): [dp   ]  timestep change in canopy temperature
@@ -338,12 +339,8 @@ subroutine updateVars(&
       if(ixDomainType==iname_cas)then
         if(computeEnthTemp)then
           call T2enthTemp_cas(&
-                      ! input
                       scalarCanairTempTrial,       & ! intent(in): canopy air temperature (K)
-                      ! output
-                      scalarCanairEnthalpyTrial,   & ! intent(out): enthalpy of the canopy air space (J m-3)
-                      err,cmessage)                  ! intent(out):   error control
-          if(err/=0)then; message=trim(message)//trim(cmessage); return; endif
+                      scalarCanairEnthalpyTrial)     ! intent(out): enthalpy of the canopy air space (J m-3)
         else
           scalarCanairEnthalpyTrial = realMissing
         endif
@@ -373,7 +370,6 @@ subroutine updateVars(&
               mLayerVolFracLiqTrial(iLayer) = effSat*avPore + theta_res(ixControlIndex)
               mLayerVolFracWatTrial(iLayer) = mLayerVolFracLiqTrial(iLayer) + mLayerVolFracIceTrial(iLayer) ! no volume expansion
               mLayerMatricHeadTrial(ixControlIndex) = matricHead(mLayerVolFracWatTrial(iLayer),vGn_alpha(ixControlIndex),theta_res(ixControlIndex),theta_sat(ixControlIndex),vGn_n(ixControlIndex),vGn_m(ixControlIndex))
-              !write(*,'(a,1x,i4,1x,3(f20.10,1x))') 'mLayerVolFracLiqTrial(iLayer) 1 = ', iLayer, mLayerVolFracLiqTrial(iLayer), mLayerVolFracIceTrial(iLayer), mLayerVolFracWatTrial(iLayer)
             ! --> update the total water from the total water matric potential
             case(iname_matLayer)
               mLayerVolFracWatTrial(iLayer) = volFracLiq(mLayerMatricHeadTrial(ixControlIndex),vGn_alpha(ixControlIndex),theta_res(ixControlIndex),theta_sat(ixControlIndex),vGn_n(ixControlIndex),vGn_m(ixControlIndex))
@@ -443,20 +439,27 @@ subroutine updateVars(&
         ! --> partially frozen: dependence of liquid water on temperature
         if(xTemp<Tcrit)then
           select case(ixDomainType)
-            case(iname_veg);  dTheta_dTkCanopy         = dFracLiq_dTk(xTemp,snowfrz_scale)*scalarCanopyWatTrial/(iden_water*canopyDepth)
-            case(iname_snow); mLayerdTheta_dTk(iLayer) = dFracLiq_dTk(xTemp,snowfrz_scale)*mLayerVolFracWatTrial(iLayer)
-            case(iname_soil); mLayerdTheta_dTk(iLayer) = dTheta_dTk(xTemp,theta_res(ixControlIndex),theta_sat(ixControlIndex),vGn_alpha(ixControlIndex),vGn_n(ixControlIndex),vGn_m(ixControlIndex))
+            case(iname_veg)
+              dFracLiqVeg_dTkCanopy = dFracLiq_dTk(xTemp,snowfrz_scale)
+              dTheta_dTkCanopy = dFracLiqVeg_dTkCanopy * scalarCanopyWatTrial/(iden_water*canopyDepth)
+            case(iname_snow)
+              dFracLiqWat_dTk(iLayer) = dFracLiq_dTk(xTemp,snowfrz_scale)
+              mLayerdTheta_dTk(iLayer) = dFracLiqWat_dTk(iLayer) * mLayerVolFracWatTrial(iLayer)
+            case(iname_soil)
+              dFracLiqWat_dTk(iLayer) = 0._rkind !dTheta_dTk(xTemp,theta_res(ixControlIndex),theta_sat(ixControlIndex),vGn_alpha(ixControlIndex),vGn_n(ixControlIndex),vGn_m(ixControlIndex))/ mLayerVolFracWatTrial(iLayer)
+              mLayerdTheta_dTk(iLayer) = dTheta_dTk(xTemp,theta_res(ixControlIndex),theta_sat(ixControlIndex),vGn_alpha(ixControlIndex),vGn_n(ixControlIndex),vGn_m(ixControlIndex))
             case default; err=20; message=trim(message)//'expect case to be iname_veg, iname_snow, iname_soil'; return
           end select  ! domain type
 
         ! --> unfrozen: no dependence of liquid water on temperature
         else
           select case(ixDomainType)
-            case(iname_veg);              dTheta_dTkCanopy         = 0._rkind
-            case(iname_snow, iname_soil); mLayerdTheta_dTk(iLayer) = 0._rkind
+            case(iname_veg);              dTheta_dTkCanopy         = 0._rkind; dFracLiqVeg_dTkCanopy   = 0._rkind
+            case(iname_snow, iname_soil); mLayerdTheta_dTk(iLayer) = 0._rkind; dFracLiqWat_dTk(iLayer) = 0._rkind
             case default; err=20; message=trim(message)//'expect case to be iname_veg, iname_snow, iname_soil'; return
           end select  ! domain type
         endif
+
 
         ! -----
         ! - update volumetric fraction of liquid water and ice...
@@ -668,38 +671,29 @@ subroutine updateVars(&
       if(ixDomainType==iname_veg)then
         if(computeEnthTemp)then
           call T2enthTemp_veg(&
-                      ! input
                       canopyDepth,                 & ! intent(in): canopy depth (m)
                       specificHeatVeg,             & ! intent(in): specific heat of vegetation (J kg-1 K-1)
                       maxMassVegetation,           & ! intent(in): maximum mass of vegetation (kg m-2)
                       snowfrz_scale,               & ! intent(in): scaling parameter for the snow freezing curve  (K-1)
                       scalarCanopyTempTrial,       & ! intent(in): canopy temperature (K)
                       scalarCanopyWatTrial,        & ! intent(in): canopy water content (kg m-2)
-                      ! output
-                      scalarCanopyEnthTempTrial,   & ! intent(out): temperature component of enthalpy of the vegetation canopy (J m-3)
-                      err,cmessage)                  ! intent(out):   error control
-          if(err/=0)then; message=trim(message)//trim(cmessage); return; endif
+                      scalarCanopyEnthTempTrial)     ! intent(out): temperature component of enthalpy of the vegetation canopy (J m-3)
         else
           scalarCanopyEnthTempTrial = realMissing
         endif
       elseif(ixDomainType==iname_snow)then
         if(computeEnthTemp)then
           call T2enthTemp_snow(&
-                      ! input
                       snowfrz_scale,                   & ! intent(in):  scaling parameter for the snow freezing curve  (K-1)
                       mLayerTempTrial(iLayer),         & ! intent(in):  layer temperature (K)
                       mLayerVolFracWatTrial(iLayer),   & ! intent(in):  volumetric total water content (-)
-                      ! output
-                      mLayerEnthTempTrial(iLayer),     & ! intent(out): temperature component of enthalpy of each snow layer (J m-3)
-                      err,cmessage)                      ! intent(out): error control
-          if(err/=0)then; message=trim(message)//trim(cmessage); return; endif
+                      mLayerEnthTempTrial(iLayer))       ! intent(out): temperature component of enthalpy of each snow layer (J m-3)
         else
           mLayerEnthTempTrial(iLayer) = realMissing
         endif
       elseif(ixDomainType==iname_soil)then
         if(computeEnthTemp)then
           call T2enthTemp_soil(&
-                      ! input
                       use_lookup,                            & ! intent(in):  flag to use the lookup table for soil enthalpy
                       soil_dens_intr(ixControlIndex),        & ! intent(in):  intrinsic soil density (kg m-3)
                       vGn_alpha(ixControlIndex),vGn_n(ixControlIndex),theta_sat(ixControlIndex),theta_res(ixControlIndex),vGn_m(ixControlIndex), & ! intent(in): soil parameters
@@ -708,10 +702,7 @@ subroutine updateVars(&
                       realMissing,                           & ! intent(in):  lower value of integral (not computed)
                       mLayerTempTrial(iLayer),               & ! intent(in):  layer temperature (K)
                       mLayerMatricHeadTrial(ixControlIndex), & ! intent(in):  matric head (m)
-                     ! output
-                      mLayerEnthTempTrial(iLayer),           & ! intent(out): temperature component of enthalpy soil layer (J m-3)
-                      err,cmessage)                            ! intent(out): error control      
-          if(err/=0)then; message=trim(message)//trim(cmessage); return; endif
+                      mLayerEnthTempTrial(iLayer))             ! intent(out): temperature component of enthalpy soil layer (J m-3)
         else
           mLayerEnthTempTrial(iLayer) = realMissing
         endif

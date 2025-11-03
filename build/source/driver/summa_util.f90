@@ -87,9 +87,13 @@ contains
 
  ! check number of command-line arguments
  nArgument = command_argument_count()
+#ifdef NGEN_ACTIVE
+    !no command arguments with NGen
+#else
  if (nArgument < 1) then
   call printCommandHelp()
  end if
+#endif
 
  ! read command line arguments
  allocate(argString(nArgument))
@@ -140,7 +144,7 @@ contains
     endif
     ! get name of master control file
     summaFileManagerFile=trim(argString(iArgument+1))
-    if(idx_rank==0)then; print "(A)", "file_master is '"//trim(summaFileManagerFile)//"'."; end if
+    print "(A)", "file_master is '"//trim(summaFileManagerFile)//"'."
 
    ! define the formation of new output files
    case ('-n', '--newFile')

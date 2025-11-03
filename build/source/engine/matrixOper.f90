@@ -23,9 +23,6 @@ module matrixOper_module
 ! data types
 USE nrtype
 
-! access the global print flag
-USE globalData,only:globalPrintFlag
-
 ! access named variables to describe the form and structure of the matrices used in the numerical solver
 USE globalData,only: nRHS           ! number of unknown variables on the RHS of the linear system A.X=B
 USE globalData,only: ku             ! number of super-diagonal bands
@@ -51,11 +48,11 @@ contains
  ! input variables
  integer(i4b),intent(in)         :: ixMatrix          ! type of matrix (full Jacobian or band diagonal)
  integer(i4b),intent(in)         :: nState            ! number of state variables
- real(rkind),intent(in)             :: aJac(:,:)         ! original Jacobian matrix
- real(rkind),intent(in)             :: fScale(:)         ! characteristic scale of the function evaluations
- real(rkind),intent(in)             :: xScale(:)         ! characteristic scale of the state vector
+ real(rkind),intent(in)          :: aJac(:,:)         ! original Jacobian matrix
+ real(rkind),intent(in)          :: fScale(:)         ! characteristic scale of the function evaluations
+ real(rkind),intent(in)          :: xScale(:)         ! characteristic scale of the state vector
  ! output variables
- real(rkind),intent(out)            :: aJacScaled(:,:)   ! scaled Jacobian matrix
+ real(rkind),intent(out)         :: aJacScaled(:,:)   ! scaled Jacobian matrix
  integer(i4b),intent(out)        :: err               ! error code
  character(*),intent(out)        :: message           ! error message
  ! ---------------------------------------------------------------------------------------------------------
@@ -110,10 +107,10 @@ contains
  ! input
  integer(i4b),intent(in)        :: ixMatrix   ! type of matrix (full Jacobian or band diagonal)
  integer(i4b),intent(in)        :: nState     ! number of state variables
- real(rkind),intent(in)            :: aJac(:,:)  ! jacobian matrix
- real(rkind),intent(in)            :: rVec(:)    ! residual vector
+ real(rkind),intent(in)         :: aJac(:,:)  ! jacobian matrix
+ real(rkind),intent(in)         :: rVec(:)    ! residual vector
  ! output
- real(rkind),intent(out)           :: grad(:)    ! gradient
+ real(rkind),intent(out)        :: grad(:)    ! gradient
  integer(i4b),intent(out)       :: err        ! error code
  character(*),intent(out)       :: message    ! error message
  ! local
@@ -172,6 +169,8 @@ contains
   case(ixBandMatrix); message='lapackSolv/dgbsv/'
   case default; err=20; message=trim(message)//'unable to identify option for the type of matrix'
  end select
+
+ !call openblas_set_num_threads(1) ! set the number of threads to 1
 
  ! form the rhs matrix
  ! NOTE: copy the vector here to ensure that the residual vector is not overwritten

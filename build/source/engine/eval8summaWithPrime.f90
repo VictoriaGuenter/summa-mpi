@@ -6,7 +6,7 @@ USE nrtype
 
 ! access missing values
 USE globalData,only:integerMissing  ! missing integer
-USE globalData,only:realMissing     ! missing double precision number
+USE globalData,only:realMissing     ! missing real number
 USE globalData,only:quadMissing     ! missing quadruple precision number
 
 ! constants
@@ -56,7 +56,6 @@ subroutine eval8summaWithPrime(&
                       nSnow,                         & ! intent(in):    number of snow layers
                       nSoil,                         & ! intent(in):    number of soil layers
                       nLayers,                       & ! intent(in):    total number of layers
-                      nState,                        & ! intent(in):    total number of state variables
                       insideSUN,                     & ! intent(in):    flag to indicate if we are inside Sundials solver
                       firstSubStep,                  & ! intent(in):    flag to indicate if we are processing the first sub-step
                       firstFluxCall,                 & ! intent(inout): flag to indicate if we are processing the first flux call
@@ -123,7 +122,6 @@ subroutine eval8summaWithPrime(&
   integer(i4b),intent(in)         :: nSnow                       ! number of snow layers
   integer(i4b),intent(in)         :: nSoil                       ! number of soil layers
   integer(i4b),intent(in)         :: nLayers                     ! total number of layers
-  integer,intent(in)              :: nState                      ! total number of state variables
   logical(lgt),intent(in)         :: insideSUN                   ! flag to indicate if we are inside Sundials solver
   logical(lgt),intent(in)         :: firstSubStep                ! flag to indicate if we are processing the first sub-step
   logical(lgt),intent(inout)      :: firstFluxCall               ! flag to indicate if we are processing the first flux call
@@ -206,7 +204,6 @@ subroutine eval8summaWithPrime(&
   real(rkind)                     :: scalarCanopyNrgPrime        ! prime value for energy of the vegetation canopy
   real(rkind),dimension(nLayers)  :: mLayerNrgPrime              ! prime vector of energy of each snow and soil layer
   ! other local variables
-  integer(i4b)                    :: iLayer                      ! index of model layer in the snow+soil domain
   integer(i4b)                    :: jState(1)                   ! index of model state for the scalar solution within the soil domain
   integer(i4b)                    :: ixBeg,ixEnd                 ! index of indices for the soil compression routine
   character(LEN=256)              :: cmessage                    ! error message of downwind routine
@@ -252,6 +249,7 @@ subroutine eval8summaWithPrime(&
     dThermalC_dWatBelow       => deriv_data%var(iLookDERIV%dThermalC_dWatBelow)%dat        ,& ! intent(out): [dp(:)]  derivative in the thermal conductivity w.r.t. water state in the layer above
     dThermalC_dTempAbove      => deriv_data%var(iLookDERIV%dThermalC_dTempAbove)%dat       ,& ! intent(out): [dp(:)]  derivative in the thermal conductivity w.r.t. energy state in the layer above
     dThermalC_dTempBelow      => deriv_data%var(iLookDERIV%dThermalC_dTempBelow)%dat       ,& ! intent(out): [dp(:)]  derivative in the thermal conductivity w.r.t. energy state in the layer above
+    dCm_dPsi0                 => deriv_data%var(iLookDERIV%dCm_dPsi0)%dat                  ,& ! intent(out): [dp(:)]  derivative in heat capacity w.r.t. matric potential (J kg-1 K-1)
     dCm_dTk                   => deriv_data%var(iLookDERIV%dCm_dTk)%dat                    ,& ! intent(out): [dp(:)]  derivative in heat capacity w.r.t. temperature (J kg-1 K-2)
     dCm_dTkCanopy             => deriv_data%var(iLookDERIV%dCm_dTkCanopy)%dat(1)           ,& ! intent(out): [dp   ]  derivative in heat capacity w.r.t. canopy temperature (J kg-1 K-2)
     ! mapping
@@ -261,9 +259,9 @@ subroutine eval8summaWithPrime(&
     heatCapVegTrial           => diag_data%var(iLookDIAG%scalarBulkVolHeatCapVeg)%dat(1)   ,& ! intent(out): [dp]     volumetric heat capacity of vegetation canopy
     mLayerHeatCapTrial        => diag_data%var(iLookDIAG%mLayerVolHtCapBulk)%dat           ,& ! intent(out): [dp(:)]  heat capacity for snow and soil
     ! Cm
-    canopyCmTrial             => diag_data%var(iLookDIAG%scalarCanopyCm)%dat(1)            ,& ! intent(out): [dp]     Cm of the canopy
-    mLayerCmTrial             => diag_data%var(iLookDIAG%mLayerCm)%dat                      & ! intent(out): [dp(:)]  Cm of snow and soil
-    ) ! association to variables in the data structures
+    scalarCanopyCmTrial       => diag_data%var(iLookDIAG%scalarCanopyCm)%dat(1)            ,& ! intent(out): [dp]    Cm of the canopy
+    mLayerCmTrial             => diag_data%var(iLookDIAG%mLayerCm)%dat                      & ! intent(out): [dp(:)] Cm of snow and soil
+  ) ! association to variables in the data structures
     ! --------------------------------------------------------------------------------------------------------------------------------
     ! initialize error control
     err=0; message="eval8summaWithPrime/"
@@ -338,8 +336,6 @@ subroutine eval8summaWithPrime(&
     call varExtract(&
                     ! input
                     stateVec,                  & ! intent(in):    model state vector (mixed units)
-                    diag_data,                 & ! intent(in):    model diagnostic variables for a local HRU
-                    prog_data,                 & ! intent(in):    model prognostic variables for a local HRU
                     indx_data,                 & ! intent(in):    indices defining model states and layers
                     ! output: variables for the vegetation canopy
                     scalarCanairNrgTrial,      & ! intent(inout): trial value of energy of the canopy air space, temperature (K) or enthalpy (J m-3)
@@ -375,8 +371,6 @@ subroutine eval8summaWithPrime(&
     call varExtract(&
                   ! input
                   stateVecPrime,             & ! intent(in):    derivative of model state vector (mixed units)
-                  diag_data,                 & ! intent(in):    model diagnostic variables for a local HRU
-                  prog_data,                 & ! intent(in):    model prognostic variables for a local HRU
                   indx_data,                 & ! intent(in):    indices defining model states and layers
                   ! output: variables for the vegetation canopy
                   scalarCanairNrgPrime,      & ! intent(inout): derivative of energy of the canopy air space, temperature (K s-1) or enthalpy (W m-3)
@@ -524,12 +518,8 @@ subroutine eval8summaWithPrime(&
       ! update thermal conductivity
       call computThermConduct(&
                           ! input: control variables
-                          computeVegFlux,        & ! intent(in):    flag to denote if computing the vegetation flux
                           nLayers,               & ! intent(in):    total number of layers
-                          canopyDepth,           & ! intent(in):    canopy depth (m)
                           ! input: state variables
-                          scalarCanopyIceTrial,  & ! intent(in):    trial value for mass of ice on the vegetation canopy (kg m-2)
-                          scalarCanopyLiqTrial,  & ! intent(in):    trial value of canopy liquid water (kg m-2)
                           mLayerTempTrial,       & ! intent(in):    trial temperature of layer temperature (K)
                           mLayerMatricHeadTrial, & ! intent(in):    trial value for total water matric potential (m)
                           mLayerVolFracIceTrial, & ! intent(in):    volumetric fraction of ice at the start of the sub-step (-)
@@ -563,23 +553,26 @@ subroutine eval8summaWithPrime(&
       ! compute C_m
       call computCm(&
                  ! input: state variables
-                 scalarCanopyTempTrial, & ! intent(in):    trial value of canopy temperature (K)
-                 mLayerTempTrial,       & ! intent(in):    trial value of layer temperature (K)
-                 mLayerMatricHeadTrial, & ! intent(in):    trial value for total water matric potential (-)
+                 canopyDepth,               & ! intent(in):    canopy depth (m)
+                 scalarCanopyTempTrial,     & ! intent(in):    trial value of canopy temperature (K)
+                 mLayerTempTrial,           & ! intent(in):    trial value of layer temperature (K)
+                 mLayerMatricHeadTrial,     & ! intent(in):    trial value for total water matric potential (-)
                  ! input data structures
-                 mpar_data,             & ! intent(in):    model parameters
-                 indx_data,             & ! intent(in):    model layer indices
+                 mpar_data,                 & ! intent(in):    model parameters
+                 indx_data,                 & ! intent(in):    model layer indices
                  ! output
-                 canopyCmTrial,         & ! intent(inout): Cm for vegetation (J kg K-1)
-                 mLayerCmTrial,         & ! intent(inout): Cm for soil and snow (J kg K-1)
-                 dCm_dTk,               & ! intent(inout): derivative in Cm w.r.t. temperature (J kg K-2)
-                 dCm_dTkCanopy,         & ! intent(inout): derivative in Cm w.r.t. temperature (J kg K-2)
-                 err,cmessage)            ! intent(inout): error control
+                 scalarCanopyCmTrial,       & ! intent(inout): Cm for vegetation (J kg K-1)
+                 mLayerCmTrial,             & ! intent(inout): Cm for soil and snow (J kg K-1)
+                 dCm_dPsi0,                 & ! intent(inout): derivative in Cm w.r.t. matric potential (J kg)
+                 dCm_dTk,                   & ! intent(inout): derivative in Cm w.r.t. temperature (J kg K-2)
+                 dCm_dTkCanopy,             & ! intent(inout): derivative in Cm w.r.t. temperature (J kg K-2)
+                 err,cmessage)                ! intent(inout): error control
     else
-      canopyCmTrial = 0._qp
-      mLayerCmTrial = 0._qp
-      dCm_dTk       = 0._rkind
-      dCm_dTkCanopy = 0._rkind
+      scalarCanopyCmTrial = 0._rkind
+      mLayerCmTrial       = 0._rkind
+      dCm_dPsi0           = 0._rkind
+      dCm_dTk             = 0._rkind
+      dCm_dTkCanopy       = 0._rkind
     endif ! needStateCm
 
     ! save the number of flux calls per time step
@@ -680,8 +673,8 @@ subroutine eval8summaWithPrime(&
                       mLayerVolFracWatPrime,      & ! intent(in):  prime vector of the volumetric water in each snow and soil layer (s-1)
                       mLayerVolFracLiqPrime,      & ! intent(in):  prime vector of the volumetric liq in each snow and soil layer (s-1)
                       ! input: enthalpy terms
-                      canopyCmTrial,              & ! intent(in):  Cm of vegetation canopy (-)
-                      mLayerCmTrial,              & ! intent(in):  Cm of each snow and soil layer (-)
+                      scalarCanopyCmTrial,        & ! intent(in):  Cm for vegetation canopy (-)
+                      mLayerCmTrial,              & ! intent(in):  Cm for each layer (-)
                       scalarCanairEnthalpyPrime,  & ! intent(in):  prime value for the enthalpy of the canopy air space (W m-3)
                       scalarCanopyEnthalpyPrime,  & ! intent(in):  prime value for the of enthalpy of the vegetation canopy (W m-3)
                       mLayerEnthalpyPrime,        & ! intent(in):  prime vector of the of enthalpy of each snow and soil layer (W m-3)
@@ -756,7 +749,6 @@ integer(c_int) function eval8summa4ida(tres, sunvec_y, sunvec_yp, sunvec_r, user
                 eqns_data%nSnow,                         & ! intent(in):    number of snow layers
                 eqns_data%nSoil,                         & ! intent(in):    number of soil layers
                 eqns_data%nLayers,                       & ! intent(in):    number of layers
-                eqns_data%nState,                        & ! intent(in):    number of state variables in the current subset
                 .true.,                                  & ! intent(in):    inside SUNDIALS solver
                 eqns_data%firstSubStep,                  & ! intent(in):    flag to indicate if we are processing the first sub-step
                 eqns_data%firstFluxCall,                 & ! intent(inout): flag to indicate if we are processing the first flux call

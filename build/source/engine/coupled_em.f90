@@ -22,6 +22,7 @@ module coupled_em_module
 
 ! homegrown solver data types
 USE nrtype
+USE globalData,only: verySmall ! a very small number used as an additive constant to check if substantial difference among real numbers
 
 ! physical constants
 USE multiconst,only:&
@@ -63,7 +64,7 @@ USE globalData,only:averageFlux_meta       ! metadata on the timestep-average mo
 USE globalData,only:data_step              ! time step of forcing data (s)
 USE globalData,only:model_decisions        ! model decision structure
 USE globalData,only:globalPrintFlag        ! the global print flag
-USE globalData,only:realMissing            ! missing double precision number
+USE globalData,only:realMissing            ! missing real number
 
 
 ! look-up values for the maximum interception capacity
@@ -99,8 +100,6 @@ USE mDecisions_module,only:         &
 implicit none
 private
 public::coupled_em
-! algorithmic parameters
-real(rkind),parameter     :: verySmall=1.e-6_rkind   ! used as an additive constant to check if substantial difference among real numbers
 contains
 
 
@@ -158,7 +157,7 @@ subroutine coupled_em(&
 
   implicit none
 
-  integer(8),intent(in)                :: hruId                  ! hruId
+  integer(i8b),intent(in)              :: hruId                  ! hruId
   real(rkind),intent(inout)            :: dt_init                ! used to initialize the size of the sub-step
   integer(i4b),intent(in)              :: dt_init_factor         ! Used to adjust the length of the timestep in the event of a failure
   logical(lgt),intent(inout)           :: computeVegFlux         ! flag to indicate if we are computing fluxes over vegetation (.false. means veg is buried with snow)
@@ -208,9 +207,7 @@ subroutine coupled_em(&
   real(rkind)                          :: dCanopyWetFraction_dT   ! derivative in wetted fraction w.r.t. canopy temperature (K-1)
   real(rkind),parameter                :: varNotUsed1=-9999._rkind ! variables used to calculate derivatives (not needed here)
   real(rkind),parameter                :: varNotUsed2=-9999._rkind ! variables used to calculate derivatives (not needed here)
-  integer(i4b)                         :: iSnow                  ! index of snow layers
   integer(i4b)                         :: iLayer                 ! index of model layers
-  real(rkind)                          :: massLiquid             ! mass liquid water (kg m-2)
   real(rkind)                          :: superflousSub          ! superflous sublimation (kg m-2 s-1)
   real(rkind)                          :: superflousNrg          ! superflous energy that cannot be used for sublimation (W m-2 [J m-2 s-1])
   integer(i4b)                         :: ixSolution             ! solution method used by opSplittin
@@ -219,8 +216,7 @@ subroutine coupled_em(&
   logical(lgt)                         :: tooMuchMelt            ! flag to denote that there was too much melt in a given time step
   logical(lgt)                         :: tooMuchSublim          ! flag to denote that there was too much sublimation in a given time step
   logical(lgt)                         :: doLayerMerge           ! flag to denote the need to merge snow layers
-  logical(lgt)                         :: pauseFlag              ! flag to pause execution
-  logical(lgt),parameter               :: backwardsCompatibility=.true.  ! flag to denote a desire to ensure backwards compatibility with previous branches
+  logical(lgt),parameter               :: backwardsCompatibility=.false.  ! flag to denote a desire to ensure backwards compatibility with previous branches for end of time step flux only 
   logical(lgt)                         :: checkMassBalance_ds    ! flag to check the mass balance over the data step
   type(var_ilength)                    :: indx_temp              ! temporary model index variables saved only on outer loop
   type(var_ilength)                    :: indx_temp0             ! temporary model index variables saved every time
@@ -250,7 +246,10 @@ subroutine coupled_em(&
   real(rkind)                          :: meanLatHeatCanopyEvap  ! timestep-average latent heat flux for evaporation from the canopy to the canopy air space (W m-2)
   real(rkind)                          :: meanSenHeatCanopy      ! timestep-average sensible heat flux from the canopy to the canopy air space (W m-2)
   ! balance checks
+  logical(lgt)                         :: bal_veg                ! flag to denote if computed a vegetation balance
   logical(lgt)                         :: bal_snow               ! flag to denote if computed a snow balance
+  logical(lgt)                         :: bal_soil               ! flag to denote if computed a soil balance
+  logical(lgt)                         :: bal_aq                 ! flag to denote if computed an aquifer balance
   integer(i4b)                         :: iVar                   ! loop through model variables
   real(rkind)                          :: balanceSoilCompress    ! total soil compression (kg m-2)
   real(rkind)                          :: scalarCanopyWatBalError! water balance error for the vegetation canopy (kg m-2)
@@ -280,6 +279,7 @@ subroutine coupled_em(&
   real(rkind)                          :: mean_step_dt_sub       ! mean solution step for the sub-step
   real(rkind)                          :: sumStepSize            ! sum solution step for the data step
   ! outer loop control
+  integer(i4b)                         :: be_steps               ! number of substeps for a BE solver
   logical(lgt)                         :: firstInnerStep         ! flag to denote if the first time step in maxstep subStep
   logical(lgt)                         :: lastInnerStep          ! flag to denote if the last time step in maxstep subStep
   logical(lgt)                         :: do_outer               ! flag to denote if doing the outer steps surrounding the call to opSplittin
@@ -288,7 +288,6 @@ subroutine coupled_em(&
   logical(lgt)                         :: computeEnthalpy        ! flag to compute enthalpy regardless of the model decision
   logical(lgt)                         :: enthalpyStateVec       ! flag if enthalpy is a state variable (IDA)
   logical(lgt)                         :: use_lookup             ! flag to use the lookup table for soil enthalpy, otherwise use analytical solution
-
   ! ----------------------------------------------------------------------------------------------------------------------------------------------
   ! initialize error control
   err=0; message="coupled_em/"
@@ -310,12 +309,8 @@ subroutine coupled_em(&
   ! check if the aquifer is included
   includeAquifer = (model_decisions(iLookDECISIONS%groundwatr)%iDecision==bigBucket)
 
-  ! initialize the numerix tracking variables
-  indx_data%var(iLookINDEX%numberFluxCalc       )%dat(1) = 0  ! number of flux calculations                     (-)
-  indx_data%var(iLookINDEX%numberStateSplit     )%dat(1) = 0  ! number of state splitting solutions             (-)
-  indx_data%var(iLookINDEX%numberDomainSplitNrg )%dat(1) = 0  ! number of domain splitting solutions for energy (-)
-  indx_data%var(iLookINDEX%numberDomainSplitMass)%dat(1) = 0  ! number of domain splitting solutions for mass   (-)
-  indx_data%var(iLookINDEX%numberScalarSolutions)%dat(1) = 0  ! number of scalar solutions                      (-)
+  ! initialize variables
+  call initialize_coupled_em
 
   ! link canopy depth to the information in the data structure
   canopy: associate(&
@@ -325,30 +320,10 @@ subroutine coupled_em(&
     maxMassVegetation => mpar_data%var(iLookPARAM%maxMassVegetation)%dat(1) & ! maximum mass of vegetation (kg m-2)
     )
 
-    ! start by NOT pausing
-    pauseFlag=.false.
-
-    ! start by assuming that the step is successful
-    stepFailure  = .false.
-    doLayerMerge = .false.
-
-    ! initialize flags to modify the veg layers or modify snow layers
-    modifiedLayers    = .false.    ! flag to denote that snow layers were modified
-    modifiedVegState  = .false.    ! flag to denote that vegetation states were modified
-
     ! define the first step and first and last inner steps
     firstSubStep = .true.
     firstInnerStep = .true.
     lastInnerStep = .false.
-
-    ! count the number of snow and soil layers
-    ! NOTE: need to recompute the number of snow and soil layers at the start of each sub-step because the number of layers may change
-    !         (nSnow and nSoil are shared in the data structure)
-    nSnow = count(indx_data%var(iLookINDEX%layerType)%dat==iname_snow)
-    nSoil = count(indx_data%var(iLookINDEX%layerType)%dat==iname_soil)
-
-    ! compute the total number of snow and soil layers
-    nLayers = nSnow + nSoil
 
     ! create temporary data structures for prognostic variables
     call resizeData(prog_meta(:),prog_data,prog_temp,err=err,message=cmessage)
@@ -369,29 +344,11 @@ subroutine coupled_em(&
     call allocLocal(averageFlux_meta(:)%var_info,flux_inner,nSnow,nSoil,err,cmessage)
     if(err/=0)then; err=20; message=trim(message)//trim(cmessage); return; end if
 
-    ! initialize surface melt pond
-    sfcMeltPond       = 0._rkind  ! change in storage associated with the surface melt pond (kg m-2)
-
     ! initialize fluxes to average over data_step (averaged over substep in varSubStep)
     do iVar=1,size(averageFlux_meta)
       flux_mean%var(iVar)%dat(:) = 0._rkind
     end do
-    meanCanopySublimation = 0._rkind ! mean canopy sublimation
-    meanLatHeatCanopyEvap = 0._rkind ! mean latent heat flux for evaporation from the canopy
-    meanSenHeatCanopy     = 0._rkind ! mean sensible heat flux from the canopy
-    effRainfall           = 0._rkind ! mean total effective rainfall over snow
-
-    diag_data%var(iLookDIAG%meanStepSize)%dat(1) = 0._rkind ! mean step size over data_step
-
-    ! Need mean soil compression for balance checks but it is not in flux structure so handle differently 
-    !  This will be a problem if nSoil changes (currently not possible)-- then might need to not keep the average
-    allocate(meanSoilCompress(nSoil))
-    allocate(innerSoilCompress(nSoil))
-    meanSoilCompress = 0._rkind ! mean total soil compression
-
-    ! initialize the balance checks
-    meanBalance = 0._rkind
-
+  
     ! associate local variables with information in the data structures
     associate(&
     ! model decisions
@@ -417,6 +374,14 @@ subroutine coupled_em(&
         case(kinsol, homegrown); checkMassBalance_ds = .true.  ! KINSOL or homegrown give finite difference dt_sub fluxes and were summed for an average flux
         case default; err=20;    message=trim(message)//'expect num_method to be ida, kinsol, or homegrown (or itertive, which is homegrown)'; return
       end select
+
+      ! set the number of substeps for a BE solver
+      be_steps = NINT(mpar_data%var(iLookPARAM%be_steps)%dat(1)) ! number of substeps for a BE solver
+      if (be_steps < 1) then
+        message=trim(message)//'expect be_steps to be greater than 0'
+        err=20; return
+      end if
+      if (ixNumericalMethod == ida) be_steps = 1_i4b ! IDA does not use substeps
 
       ! set the flag to compute enthalpy, may want to have this true always if want to output enthalpy
       computeEnthalpy  = .false.
@@ -462,9 +427,9 @@ subroutine coupled_em(&
     ! NOTE - temporary assignment of minstep to foce something reasonable
     ! changing the maxstep parameter will make the outer and inner loop computations here in coupled_em happen more frequently
     ! changing the be_steps parameter will make the inner loop computations in opSplittin happen more frequently (e.g. be_steps = 32.0 give BE32)
-    minstep = 10._rkind  ! mpar_data%var(iLookPARAM%minstep)%dat(1)  ! minimum time step (s)
+    minstep = mpar_data%var(iLookPARAM%minstep)%dat(1)  ! minimum time step (s)
     maxstep = mpar_data%var(iLookPARAM%maxstep)%dat(1)  ! maximum time step (s)
-    maxstep_op = mpar_data%var(iLookPARAM%maxstep)%dat(1)/NINT(mpar_data%var(iLookPARAM%be_steps)%dat(1))  ! maximum time step (s) to run opSplittin over
+    maxstep_op = mpar_data%var(iLookPARAM%maxstep)%dat(1)/be_steps  ! maximum time step (s) to run opSplittin over
 
     ! compute the number of layers with roots
     nLayersRoots = count(prog_data%var(iLookPROG%iLayerHeight)%dat(nSnow:nLayers-1) < mpar_data%var(iLookPARAM%rootingDepth)%dat(1)-verySmall)
@@ -491,6 +456,7 @@ subroutine coupled_em(&
     ! compute the exposed LAI and SAI and whether veg is buried by snow
     call vegPhenlgy(&
                     ! model control
+                    nSnow,                       & ! intent(in):    number of snow layers
                     model_decisions,             & ! intent(in):    model decisions
                     ! input/output: data structures
                     fracJulDay,                  & ! intent(in):    fractional julian days since the start of year
@@ -639,22 +605,18 @@ subroutine coupled_em(&
           ! state variables in the vegetation canopy
           scalarCanopyTemp     => prog_data%var(iLookPROG%scalarCanopyTemp)%dat(1)     ,& ! canopy temperature (K)
           scalarCanopyEnthTemp => diag_data%var(iLookDIAG%scalarCanopyEnthTemp)%dat(1) ,& ! canopy temperature component of enthalpy (J m-3)
-          scalarCanopyEnthalpy => diag_data%var(iLookDIAG%scalarCanopyEnthalpy)%dat(1) ,& ! enthalpy of the vegetation canopy (J m-3)
+          scalarCanopyEnthalpy => prog_data%var(iLookPROG%scalarCanopyEnthalpy)%dat(1) ,& ! enthalpy of the vegetation canopy (J m-3)
           scalarCanopyLiq      => prog_data%var(iLookPROG%scalarCanopyLiq)%dat(1)      ,& ! mass of liquid water on the vegetation canopy (kg m-2)
           scalarCanopyIce      => prog_data%var(iLookPROG%scalarCanopyIce)%dat(1)       & ! mass of ice on the vegetation canopy (kg m-2)
           )  ! (associate local variables with model parameters)       
           call T2enthTemp_veg(&
-                          ! input
                           canopyDepth,            & ! intent(in): canopy depth (m)
                           specificHeatVeg,        & ! intent(in): specific heat of vegetation (J kg-1 K-1)
                           maxMassVegetation,      & ! intent(in): maximum mass of vegetation (kg m-2)
                           snowfrz_scale,          & ! intent(in): scaling parameter for the snow freezing curve  (K-1)
                           scalarCanopyTemp,       & ! intent(in): canopy temperature (K)
                           (scalarCanopyLiq+scalarCanopyIce), & ! intent(in): canopy water content (kg m-2)
-                           ! output
-                          scalarCanopyEnthTemp,   & ! intent(out): temperature component of enthalpy of the vegetation canopy (J m-3)
-                          err,cmessage)              ! intent(out):   error control
-          if(err/=0)then; err=20; message=trim(message)//trim(cmessage); return; end if
+                          scalarCanopyEnthTemp)     ! intent(out): temperature component of enthalpy of the vegetation canopy (J m-3)
           scalarCanopyEnthalpy = scalarCanopyEnthTemp  - LH_fus * scalarCanopyIce/ canopyDepth ! new ice and/or temperature
         end associate enthalpyVeg
       end if ! (need to recalculate enthalpy state variable)
@@ -686,8 +648,11 @@ subroutine coupled_em(&
     nsub = 0
     nsub_success = 0
 
-    ! initialize if used a snow balance
+    ! initialize if used a balance
+    bal_veg = .false.
     bal_snow = .false.
+    bal_soil = .false.
+    bal_aq   = .false.
 
     ! loop through sub-steps
     substeps: do  ! continuous do statement with exit clause (alternative to "while")
@@ -798,7 +763,7 @@ subroutine coupled_em(&
             ! variables in the snow and soil domains
             mLayerTemp           => prog_data%var(iLookPROG%mLayerTemp)%dat              ,& ! temperature (K)
             mLayerEnthTemp       => diag_data%var(iLookDIAG%mLayerEnthTemp)%dat          ,& ! temperature component of enthalpy (J m-3)
-            mLayerEnthalpy       => diag_data%var(iLookDIAG%mLayerEnthalpy)%dat          ,& ! enthalpy (J m-3)
+            mLayerEnthalpy       => prog_data%var(iLookPROG%mLayerEnthalpy)%dat          ,& ! enthalpy (J m-3)
             mLayerVolFracWat     => prog_data%var(iLookPROG%mLayerVolFracWat)%dat        ,& ! volumetric fraction of total water in each snow layer (-)
             mLayerVolFracLiq     => prog_data%var(iLookPROG%mLayerVolFracLiq)%dat        ,& ! volumetric fraction of liquid water (-)
             mLayerVolFracIce     => prog_data%var(iLookPROG%mLayerVolFracIce)%dat        ,& ! volumetric fraction of ice in each snow layer (-)
@@ -820,9 +785,7 @@ subroutine coupled_em(&
                              snowfrz_scale,             & ! intent(in):  scaling parameter for the snow freezing curve  (K-1)
                              mLayerTemp(iLayer),        & ! intent(in):  layer temperature (K)
                              mLayerVolFracWat(iLayer),  & ! intent(in):  volumetric total water content (-)
-                             mLayerEnthTemp(iLayer),    & ! intent(out): temperature component of enthalpy of each snow layer (J m-3)
-                             err,cmessage)                ! intent(out): error control
-                if(err/=0)then; message=trim(message)//trim(cmessage); return; end if
+                             mLayerEnthTemp(iLayer))      ! intent(out): temperature component of enthalpy of each snow layer (J m-3)
                 mLayerEnthalpy(iLayer) = mLayerEnthTemp(iLayer) - iden_ice * LH_fus * mLayerVolFracIce(iLayer)
               end do  ! looping through snow layers
             endif
@@ -831,7 +794,6 @@ subroutine coupled_em(&
               ! compute enthalpy for soil layers
               iSoil = iLayer - nSnow
               call T2enthTemp_soil(&
-                             ! input
                              use_lookup,                   & ! intent(in):  flag to use the lookup table for soil enthalpy
                              soil_dens_intr(iSoil),        & ! intent(in):  intrinsic soil density (kg m-3)
                              vGn_alpha(iSoil),vGn_n(iSoil),theta_sat(iSoil),theta_res(iSoil),vGn_m(iSoil), & ! intent(in): soil parameters
@@ -840,10 +802,7 @@ subroutine coupled_em(&
                              realMissing,                  & ! intent(in):  lower value of integral (not computed)
                              mLayerTemp(iLayer),           & ! intent(in):  layer temperature (K)
                              mLayerMatricHead(iSoil),      & ! intent(in):  matric head (m)
-                            ! output
-                             mLayerEnthTemp(iLayer),       & ! intent(out): temperature component of enthalpy soil layer (J m-3)
-                             err,cmessage)                   ! intent(out): error control 
-              if(err/=0)then; message=trim(message)//trim(cmessage); return; end if
+                             mLayerEnthTemp(iLayer))         ! intent(out): temperature component of enthalpy soil layer (J m-3)
               mLayerEnthalpy(iLayer) = mLayerEnthTemp(iLayer) - iden_water * LH_fus * mLayerVolFracIce(iLayer)
             end do  ! looping through soil layers
           end associate enthalpySnow
@@ -903,11 +862,11 @@ subroutine coupled_em(&
                           ! input/output: integrated snowpack properties
                           prog_data%var(iLookPROG%scalarSWE)%dat(1),               & ! intent(inout): snow water equivalent (kg m-2)
                           prog_data%var(iLookPROG%scalarSnowDepth)%dat(1),         & ! intent(inout): snow depth (m)
-                          prog_data%var(iLookPROG%scalarSfcMeltPond)%dat(1),       & ! intent(inout): surface melt pond (kg m-2)
+                          prog_data%var(iLookPROG%scalarSfcMeltPond)%dat(1),       & ! intent(out):   surface melt pond (kg m-2)
                           ! input/output: properties of the upper-most soil layer
                           prog_data%var(iLookPROG%mLayerTemp)%dat(nSnow+1),        & ! intent(inout): surface layer temperature (K)
                           prog_data%var(iLookPROG%mLayerDepth)%dat(nSnow+1),       & ! intent(inout): surface layer depth (m)
-                          diag_data%var(iLookDIAG%mLayerVolHtCapBulk)%dat(nSnow+1),& ! intent(inout): surface layer volumetric heat capacity (J m-3 K-1)
+                          diag_data%var(iLookDIAG%mLayerVolHtCapBulk)%dat(nSnow+1),& ! intent(in):    surface layer volumetric heat capacity (J m-3 K-1)
                           ! output: error control
                           err,cmessage                                        ) ! intent(out): error control
           if(err/=0)then; err=20; message=trim(message)//trim(cmessage); return; end if
@@ -915,6 +874,7 @@ subroutine coupled_em(&
 
         ! save volumetric ice content at the start of the step
         ! NOTE: used for volumetric loss due to melt-freeze
+        if (allocated(mLayerVolFracIceInit)) deallocate(mLayerVolFracIceInit) ! prep for potential size change
         allocate(mLayerVolFracIceInit(nLayers)); mLayerVolFracIceInit = prog_data%var(iLookPROG%mLayerVolFracIce)%dat
 
         ! make sure have consistent state variables to start, later done in updateVars
@@ -951,7 +911,6 @@ subroutine coupled_em(&
           ! compute enthalpy of the top soil layer if changed with surface melt pond
           if( (enthalpyStateVec .or. computeEnthalpy) .and. nSnow==0 .and. prog_data%var(iLookPROG%scalarSWE)%dat(1)>0._rkind )then
             call T2enthTemp_soil(&
-                     ! input
                       use_lookup,                                               & ! intent(in):  flag to use the lookup table for soil enthalpy
                       soil_dens_intr,                                           & ! intent(in):  intrinsic soil density (kg m-3)
                       vGn_alpha(1),vGn_n(1),theta_sat(1),theta_res(1),vGn_m(1), & ! intent(in):  van Genutchen soil parameters
@@ -960,11 +919,8 @@ subroutine coupled_em(&
                       realMissing,                                              & ! intent(in):  lower value of integral (not computed)
                       prog_data%var(iLookPROG%mLayerTemp)%dat(nSnow+1),         & ! intent(in):  surface layer temperature (K)
                       mLayerMatricHead(1),                                      & ! intent(in):  surface layer matric head (m)
-                     ! output
-                      diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(nSnow+1),     & ! intent(out): temperature component of enthalpy soil layer (J m-3)
-                      err,cmessage)                      ! intent(out): error control
-            if(err/=0)then; message=trim(message)//trim(cmessage); return; end if
-            diag_data%var(iLookDIAG%mLayerEnthalpy)%dat(nSnow+1) = diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(nSnow+1) - iden_water * LH_fus * mLayerVolFracIce(nSnow+1)
+                      diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(nSnow+1))       ! intent(out): temperature component of enthalpy soil layer (J m-3)
+            prog_data%var(iLookPROG%mLayerEnthalpy)%dat(nSnow+1) = diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(nSnow+1) - iden_water * LH_fus * mLayerVolFracIce(nSnow+1)
           end if
     
           ! compute the liquid water matric potential (m)
@@ -996,8 +952,10 @@ subroutine coupled_em(&
         end do
         innerEffRainfall  = 0._rkind ! mean total effective rainfall over snow
         innerSoilCompress = 0._rkind ! mean total soil compression
-        innerBalance = 0._rkind ! mean total balance
+        innerBalance = 0._rkind ! mean total balance array
+        if (allocated(innerBalanceLayerNrg))  deallocate(innerBalanceLayerNrg)
         allocate(innerBalanceLayerNrg(nLayers)); innerBalanceLayerNrg = 0._rkind ! mean total balance of energy in layers
+        if (allocated(innerBalanceLayerMass)) deallocate(innerBalanceLayerMass)    ! deallocate if already allocated to permit size change
         allocate(innerBalanceLayerMass(nLayers)); innerBalanceLayerMass = 0._rkind ! mean total balance of mass in layers
         sumStepSize= 0._rkind ! initialize the sum of the step sizes
 
@@ -1052,13 +1010,12 @@ subroutine coupled_em(&
 
       ! handle special case of the step failure
       ! NOTE: need to revert back to the previous state vector that we were happy with and reduce the time step
-      ! TODO: ask isn't this what the actors program does without the code block below
       if(stepFailure)then
         ! halve whole_step, for more frequent outer loop updates
         whole_step = dtSave/2._rkind
         ! check that the step is not tiny
         if(whole_step < minstep)then
-          print*,ixSolution
+          print*, 'ixSolution', ixSolution
           print*, 'dtSave, dt_sub', dtSave, whole_step
           message=trim(message)//'length of the coupled step is below the minimum step length'
           err=20; return
@@ -1140,18 +1097,14 @@ subroutine coupled_em(&
             scalarCanopyWat = scalarCanopyLiq + scalarCanopyIce
             if(enthalpyStateVec .or. computeEnthalpy)then ! recompute enthalpy of the canopy if changed water and ice content
               call T2enthTemp_veg(&
-                          ! input
                           diag_data%var(iLookDIAG%scalarCanopyDepth)%dat(1),    & ! intent(in): canopy depth (m), send in specific value since diag_data may have changed
                           specificHeatVeg,                                      & ! intent(in): specific heat of vegetation (J kg-1 K-1)
                           maxMassVegetation,                                    & ! intent(in): maximum mass of vegetation (kg m-2)
                           snowfrz_scale,                                        & ! intent(in): scaling parameter for the snow freezing curve  (K-1)
                           prog_data%var(iLookPROG%scalarCanopyTemp)%dat(1),     & ! intent(in): canopy temperature (K)
                           scalarCanopyWat,                                      & ! intent(in): canopy water content (kg m-2)
-                           ! output
-                          diag_data%var(iLookDIAG%scalarCanopyEnthTemp)%dat(1), & ! intent(out): temperature component of enthalpy of the vegetation canopy (J m-3)
-                          err,cmessage)                                           ! intent(out):   error control
-              if(err/=0)then; message=trim(message)//trim(cmessage); return; end if
-              diag_data%var(iLookDIAG%scalarCanopyEnthalpy)%dat(1) = diag_data%var(iLookDIAG%scalarCanopyEnthTemp)%dat(1) - LH_fus * scalarCanopyIce/ diag_data%var(iLookDIAG%scalarCanopyDepth)%dat(1)
+                          diag_data%var(iLookDIAG%scalarCanopyEnthTemp)%dat(1))   ! intent(out): temperature component of enthalpy of the vegetation canopy (J m-3)
+              prog_data%var(iLookPROG%scalarCanopyEnthalpy)%dat(1) = diag_data%var(iLookDIAG%scalarCanopyEnthTemp)%dat(1) - LH_fus * scalarCanopyIce/ diag_data%var(iLookDIAG%scalarCanopyDepth)%dat(1)
             endif
           end if  ! (if computing the vegetation flux)
 
@@ -1189,7 +1142,7 @@ subroutine coupled_em(&
             whole_step = dtSave/2._rkind
             ! check that the step is not tiny
             if(whole_step < minstep)then
-              print*,ixSolution
+              print*, 'ixSolution', ixSolution
               print*, 'dtSave, dt_sub', dtSave, whole_step
               message=trim(message)//'length of the coupled step is below the minimum step length'
               err=20; return
@@ -1221,10 +1174,8 @@ subroutine coupled_em(&
                              snowfrz_scale,                                       & ! intent(in):  scaling parameter for the snow freezing curve  (K-1)
                              prog_data%var(iLookPROG%mLayerTemp)%dat(iLayer),     & ! intent(in):  layer temperature (K)
                              mLayerVolFracWat(iLayer),                            & ! intent(in):  volumetric total water content (-)
-                             diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(iLayer), & ! intent(out): temperature component of enthalpy of each snow layer (J m-3)
-                             err,cmessage)                                          ! intent(out): error control
-                if(err/=0)then; message=trim(message)//trim(cmessage); return; end if
-                diag_data%var(iLookDIAG%mLayerEnthalpy)%dat(iLayer) = diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(iLayer) - iden_ice * LH_fus * mLayerVolFracIce(iLayer)
+                             diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(iLayer))   ! intent(out): temperature component of enthalpy of each snow layer (J m-3)
+                prog_data%var(iLookPROG%mLayerEnthalpy)%dat(iLayer) = diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(iLayer) - iden_ice * LH_fus * mLayerVolFracIce(iLayer)
               end do  ! looping through snow layers
             endif
           endif
@@ -1249,12 +1200,15 @@ subroutine coupled_em(&
       if (nSnow>0) innerEffRainfall = innerEffRainfall + ( flux_data%var(iLookFLUX%scalarThroughfallRain)%dat(1) + flux_data%var(iLookFLUX%scalarCanopyLiqDrainage)%dat(1) )*dt_wght
 
       ! sum the balance of energy and water per state
-      innerBalance(1) = innerBalance(1) + diag_data%var(iLookDIAG%balanceCasNrg)%dat(1)*dt_wght ! W m-3
-      innerBalance(2) = innerBalance(2) + diag_data%var(iLookDIAG%balanceVegNrg)%dat(1)*dt_wght ! W m-3
-      innerBalance(3) = innerBalance(3) + diag_data%var(iLookDIAG%balanceVegMass)%dat(1)*dt_wght              ! kg m-2 s-1
-      innerBalance(4) = innerBalance(4) + diag_data%var(iLookDIAG%balanceAqMass)%dat(1)*dt_wght * iden_water  ! kg m-2 s-1
+      if(computeVegFlux)then
+        innerBalance(1) = innerBalance(1) + diag_data%var(iLookDIAG%balanceCasNrg)%dat(1)*dt_wght ! W m-3
+        innerBalance(2) = innerBalance(2) + diag_data%var(iLookDIAG%balanceVegNrg)%dat(1)*dt_wght ! W m-3
+        innerBalance(3) = innerBalance(3) + diag_data%var(iLookDIAG%balanceVegMass)%dat(1)*dt_wght/diag_data%var(iLookDIAG%scalarCanopyDepth)%dat(1)  ! kg m-3 s-1
+        bal_veg = .true.
+      endif
+      innerBalance(4) = innerBalance(4) + diag_data%var(iLookDIAG%balanceAqMass)%dat(1)*dt_wght * iden_water  ! kg m-2 s-1 (no depth to aquifer)
       innerBalanceLayerNrg(:) = innerBalanceLayerNrg(:) + diag_data%var(iLookDIAG%balanceLayerNrg)%dat(:)*dt_wght ! W m-3
-      innerBalanceLayerMass(:) = innerBalanceLayerMass(:) + diag_data%var(iLookDIAG%balanceLayerMass)%dat(:)*dt_wght * prog_data%var(iLookPROG%mLayerDepth)%dat(:) * iden_water ! kg m-2 s-1
+      innerBalanceLayerMass(:) = innerBalanceLayerMass(:) + diag_data%var(iLookDIAG%balanceLayerMass)%dat(:)*dt_wght * iden_water ! kg m-3 s-1
 
       ! save balance of energy and water per snow+soil layer after inner step, since can change nLayers with outer steps
       diag_data%var(iLookDIAG%balanceLayerNrg)%dat(:) = innerBalanceLayerNrg(:)
@@ -1276,8 +1230,10 @@ subroutine coupled_em(&
             lyr_wght = prog_data%var(iLookPROG%mLayerDepth)%dat(iLayer) / sum( prog_data%var(iLookPROG%mLayerDepth)%dat(nSnow+1:nLayers) )
             diag_data%var(iLookDIAG%balanceSoilNrg)%dat(1)  = diag_data%var(iLookDIAG%balanceSoilNrg)%dat(1) + innerBalanceLayerNrg(iLayer)*lyr_wght
             diag_data%var(iLookDIAG%balanceSoilMass)%dat(1) = diag_data%var(iLookDIAG%balanceSoilMass)%dat(1) + innerBalanceLayerMass(iLayer)*lyr_wght
+            bal_soil = .true.
         end select
       end do
+      if (model_decisions(iLookDECISIONS%groundwatr)%iDecision == bigBucket) bal_aq = .true. ! aquifer does not change existance with time steps
 
       if(do_outer)then
         deallocate(innerBalanceLayerNrg)
@@ -1377,10 +1333,8 @@ subroutine coupled_em(&
                        snowfrz_scale,                                     & ! intent(in):  scaling parameter for the snow freezing curve  (K-1)
                        prog_data%var(iLookPROG%mLayerTemp)%dat(1),        & ! temperature of the top layer (K)
                        prog_data%var(iLookPROG%mLayerVolFracWat)%dat(1),  & ! intent(in):  volumetric total water content (-)
-                       diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(1),    & ! intent(out): temperature component of enthalpy of each snow layer (J m-3)
-                       err,cmessage)                ! intent(out): error control
-        if(err/=0)then; message=trim(message)//trim(cmessage); return; end if
-        diag_data%var(iLookDIAG%mLayerEnthalpy)%dat(1) = diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(1) - iden_ice * LH_fus * prog_data%var(iLookPROG%mLayerVolFracIce)%dat(1)
+                       diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(1))      ! intent(out): temperature component of enthalpy of each snow layer (J m-3)
+        prog_data%var(iLookPROG%mLayerEnthalpy)%dat(1) = diag_data%var(iLookDIAG%mLayerEnthTemp)%dat(1) - iden_ice * LH_fus * prog_data%var(iLookPROG%mLayerVolFracIce)%dat(1)
       end if
     end if
 
@@ -1414,7 +1368,7 @@ subroutine coupled_em(&
     ! *** balance checks and summary variable saving...
     ! ---------------------
 
-    ! save the average compression and melt pond storage in the data structures
+    ! save the average melt pond storage in the data structures
     prog_data%var(iLookPROG%scalarSfcMeltPond)%dat(1)  = sfcMeltPond
 
     ! associate local variables with information in the data structures
@@ -1443,7 +1397,7 @@ subroutine coupled_em(&
       scalarCanopyWat            => prog_data%var(iLookPROG%scalarCanopyWat)%dat(1)                               ,&  ! canopy ice content (kg m-2)
       scalarCanopyIce            => prog_data%var(iLookPROG%scalarCanopyIce)%dat(1)                               ,& ! ice content of the vegetation canopy (kg m-2)
       scalarCanopyEnthTemp       => diag_data%var(iLookDIAG%scalarCanopyEnthTemp)%dat(1)                          ,& ! temperature component of enthalpy of the vegetation canopy (K)
-      scalarCanopyEnthalpy       => diag_data%var(iLookDIAG%scalarCanopyEnthalpy)%dat(1)                          ,& ! enthalpy of the vegetation canopy (J m-3)
+      scalarCanopyEnthalpy       => prog_data%var(iLookPROG%scalarCanopyEnthalpy)%dat(1)                          ,& ! enthalpy of the vegetation canopy (J m-3)
        ! state variables in the snow+soil domains
       scalarSWE                  => prog_data%var(iLookPROG%scalarSWE)%dat(1)                                     ,&  ! snow water equivalent (kg m-2)
       mLayerDepth                => prog_data%var(iLookPROG%mLayerDepth)%dat                                      ,&  ! depth of each layer (m)
@@ -1453,7 +1407,7 @@ subroutine coupled_em(&
       scalarTotalSoilIce         => diag_data%var(iLookDIAG%scalarTotalSoilIce)%dat(1)                            ,&  ! total ice in the soil column (kg m-2)
       scalarTotalSoilLiq         => diag_data%var(iLookDIAG%scalarTotalSoilLiq)%dat(1)                            ,&  ! total liquid water in the soil column (kg m-2)
       mLayerEnthTemp             => diag_data%var(iLookDIAG%mLayerEnthTemp)%dat                                   ,& ! temperature component of enthalpy of each snow+soil layer (K)
-      mLayerEnthalpy             => diag_data%var(iLookDIAG%mLayerEnthalpy)%dat                                   ,& ! enthalpy of each snow+soil layer (J m-3)
+      mLayerEnthalpy             => prog_data%var(iLookPROG%mLayerEnthalpy)%dat                                   ,& ! enthalpy of each snow+soil layer (J m-3)
       scalarTotalSoilEnthalpy    => diag_data%var(iLookDIAG%scalarTotalSoilEnthalpy)%dat(1)                       ,& ! total enthalpy of the soil column (J m-3)
       scalarTotalSnowEnthalpy    => diag_data%var(iLookDIAG%scalarTotalSnowEnthalpy)%dat(1)                       ,& ! total enthalpy of the snow column (J m-3)
       ! state variables in the aquifer
@@ -1465,15 +1419,27 @@ subroutine coupled_em(&
       ! save balance of energy and water per single layer domain
       diag_data%var(iLookDIAG%balanceCasNrg)%dat(1)   = meanBalance(1) ! W m-3
       diag_data%var(iLookDIAG%balanceVegNrg)%dat(1)   = meanBalance(2) ! W m-3      will be realMissing if computeVegFlux is false
-      diag_data%var(iLookDIAG%balanceVegMass)%dat(1)  = meanBalance(3) ! kg m-2 s-1 will be realMissing if computeVegFlux is false
+      diag_data%var(iLookDIAG%balanceVegMass)%dat(1)  = meanBalance(3) ! kg m-3 s-1 will be realMissing if computeVegFlux is false
       diag_data%var(iLookDIAG%balanceAqMass)%dat(1)   = meanBalance(4) ! kg m-2 s-1 will be realMissing if no aquifer
       diag_data%var(iLookDIAG%balanceSnowNrg)%dat(1)  = meanBalance(5) ! W m-3      will be realMissing if no snow during data step
       diag_data%var(iLookDIAG%balanceSoilNrg)%dat(1)  = meanBalance(6) ! W m-3       
-      diag_data%var(iLookDIAG%balanceSnowMass)%dat(1) = meanBalance(7) ! kg m-2 s-1 will be realMissing if no snow during data step
-      diag_data%var(iLookDIAG%balanceSoilMass)%dat(1) = meanBalance(8) ! kg m-2 s-1
+      diag_data%var(iLookDIAG%balanceSnowMass)%dat(1) = meanBalance(7) ! kg m-3 s-1 will be realMissing if no snow during data step
+      diag_data%var(iLookDIAG%balanceSoilMass)%dat(1) = meanBalance(8) ! kg m-3 s-1
+      if(.not.bal_veg)then ! will be 0, make realMissing
+        diag_data%var(iLookDIAG%balanceCasNrg)%dat(1)   = realMissing
+        diag_data%var(iLookDIAG%balanceVegNrg)%dat(1)   = realMissing
+        diag_data%var(iLookDIAG%balanceVegMass)%dat(1)  = realMissing
+      endif
       if (.not.bal_snow)then ! will be 0, make realMissing
         diag_data%var(iLookDIAG%balanceSnowNrg)%dat(1)  = realMissing
         diag_data%var(iLookDIAG%balanceSnowMass)%dat(1) = realMissing
+      endif
+      if (.not.bal_soil)then ! will be 0, make realMissing
+        diag_data%var(iLookDIAG%balanceSoilNrg)%dat(1)  = realMissing
+        diag_data%var(iLookDIAG%balanceSoilMass)%dat(1) = realMissing
+      endif
+      if (.not.bal_aq)then ! will be 0, make realMissing
+        diag_data%var(iLookDIAG%balanceAqMass)%dat(1)   = realMissing
       endif
 
       ! -----
@@ -1676,6 +1642,70 @@ subroutine coupled_em(&
   ! get the elapsed time
   diag_data%var(iLookDIAG%wallClockTime)%dat(1) = elapsed_time
 
+contains
+
+ subroutine initialize_coupled_em
+  ! *** Initialize steps for coupled_em subroutine ***
+  ! Notes: - created to ensure certain variables are initialized prior to use in calculations
+  !        - based on warnings from the SUMMA debug build (e.g., -Wall flag)
+  !        - additional initial operations may be added here in the future
+
+  ! initialize variables
+  innerEffRainfall=0._rkind       ! inner step average effective rainfall into snow (kg m-2 s-1) 
+  sumCanopySublimation=0._rkind   ! sum of sublimation from the vegetation canopy (kg m-2 s-1) over substep
+  sumLatHeatCanopyEvap=0._rkind   ! sum of latent heat flux for evaporation from the canopy to the canopy air space (W m-2) over substep
+  sumSenHeatCanopy=0._rkind       ! sum of sensible heat flux from the canopy to the canopy air space (W m-2) over substep
+  sumSnowSublimation=0._rkind     ! sum of sublimation from the snow surface (kg m-2 s-1) over substep
+  sumStepSize=0._rkind            ! sum solution step for the data step
+  innerBalance = 0._rkind         ! mean total balance array
+
+  ! get initial value of nLayers
+  nSnow = count(indx_data%var(iLookINDEX%layerType)%dat==iname_snow)
+  nSoil = count(indx_data%var(iLookINDEX%layerType)%dat==iname_soil)
+  nLayers = nSnow + nSoil
+
+  ! allocate and initialize using the initial value of nLayers
+  allocate(innerBalanceLayerMass(nLayers)); innerBalanceLayerMass = 0._rkind ! mean total balance of mass in layers
+  allocate(innerBalanceLayerNrg(nLayers));  innerBalanceLayerNrg = 0._rkind ! mean total balance of energy in layers
+  allocate(mLayerVolFracIceInit(nLayers));  mLayerVolFracIceInit = prog_data%var(iLookPROG%mLayerVolFracIce)%dat ! volume fraction of water ice
+
+   ! initialize the numerix tracking variables
+  indx_data%var(iLookINDEX%numberFluxCalc       )%dat(1) = 0  ! number of flux calculations                     (-)
+  indx_data%var(iLookINDEX%numberStateSplit     )%dat(1) = 0  ! number of state splitting solutions             (-)
+  indx_data%var(iLookINDEX%numberDomainSplitNrg )%dat(1) = 0  ! number of domain splitting solutions for energy (-)
+  indx_data%var(iLookINDEX%numberDomainSplitMass)%dat(1) = 0  ! number of domain splitting solutions for mass   (-)
+  indx_data%var(iLookINDEX%numberScalarSolutions)%dat(1) = 0  ! number of scalar solutions                      (-)
+
+  ! initialize surface melt pond
+  sfcMeltPond       = 0._rkind  ! change in storage associated with the surface melt pond (kg m-2)
+
+  ! initialize average over data_step (averaged over substep in varSubStep)
+  meanCanopySublimation = 0._rkind ! mean canopy sublimation
+  meanLatHeatCanopyEvap = 0._rkind ! mean latent heat flux for evaporation from the canopy
+  meanSenHeatCanopy     = 0._rkind ! mean sensible heat flux from the canopy
+  effRainfall           = 0._rkind ! mean total effective rainfall over snow
+
+  diag_data%var(iLookDIAG%meanStepSize)%dat(1) = 0._rkind ! mean step size over data_step
+
+  ! Need mean soil compression for balance checks but it is not in flux structure so handle differently 
+  !  This will be a problem if nSoil changes (currently not possible)-- then might need to not keep the average
+  allocate(meanSoilCompress(nSoil))
+  allocate(innerSoilCompress(nSoil))
+  meanSoilCompress = 0._rkind ! mean total soil compression
+
+  ! initialize the balance checks
+  meanBalance = 0._rkind
+
+  ! start by assuming that the step is successful
+  stepFailure  = .false.
+  doLayerMerge = .false.
+
+  ! initialize flags to modify the veg layers or modify snow layers
+  modifiedLayers    = .false.    ! flag to denote that snow layers were modified
+  modifiedVegState  = .false.    ! flag to denote that vegetation states were modified
+
+ end subroutine initialize_coupled_em
+
 end subroutine coupled_em
 
 
@@ -1686,25 +1716,25 @@ subroutine implctMelt(&
                       ! input/output: integrated snowpack properties
                       scalarSWE,         & ! intent(inout): snow water equivalent (kg m-2)
                       scalarSnowDepth,   & ! intent(inout): snow depth (m)
-                      scalarSfcMeltPond, & ! intent(inout): surface melt pond (kg m-2)
+                      scalarSfcMeltPond, & ! intent(out):   surface melt pond (kg m-2)
                       ! input/output: properties of the upper-most soil layer
                       soilTemp,          & ! intent(inout): surface layer temperature (K)
                       soilDepth,         & ! intent(inout): surface layer depth (m)
-                      soilHeatcap,       & ! intent(inout): surface layer volumetric heat capacity (J m-3 K-1)
+                      soilHeatcap,       & ! intent(in):    surface layer volumetric heat capacity (J m-3 K-1)
                       ! output: error control
                       err,message        ) ! intent(out): error control
   implicit none
   ! input/output: integrated snowpack properties
   real(rkind),intent(inout)    :: scalarSWE          ! snow water equivalent (kg m-2)
   real(rkind),intent(inout)    :: scalarSnowDepth    ! snow depth (m)
-  real(rkind),intent(inout)    :: scalarSfcMeltPond  ! surface melt pond (kg m-2)
+  real(rkind),intent(out)      :: scalarSfcMeltPond  ! surface melt pond (kg m-2)
   ! input/output: properties of the upper-most soil layer
   real(rkind),intent(inout)    :: soilTemp           ! surface layer temperature (K)
   real(rkind),intent(inout)    :: soilDepth          ! surface layer depth (m)
-  real(rkind),intent(inout)    :: soilHeatcap        ! surface layer volumetric heat capacity (J m-3 K-1)
+  real(rkind),intent(in)       :: soilHeatcap        ! surface layer volumetric heat capacity (J m-3 K-1)
   ! output: error control
-  integer(i4b),intent(out)  :: err                ! error code
-  character(*),intent(out)  :: message            ! error message
+  integer(i4b),intent(out)     :: err                ! error code
+  character(*),intent(out)     :: message            ! error message
   ! local variables
   real(rkind)                  :: nrgRequired        ! energy required to melt all the snow (J m-2)
   real(rkind)                  :: nrgAvailable       ! energy available to melt the snow (J m-2)

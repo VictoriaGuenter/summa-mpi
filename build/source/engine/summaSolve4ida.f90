@@ -26,12 +26,10 @@ USE, intrinsic :: iso_c_binding
 USE nrtype
 USE type4ida
 
-! access the global print flag
-USE globalData,only:globalPrintFlag
-
 ! access missing values
 USE globalData,only:integerMissing  ! missing integer
-USE globalData,only:realMissing     ! missing double precision number
+USE globalData,only:realMissing     ! missing real number
+USE globalData,only:verySmaller     ! a smaller number used as an additive constant to check if substantial difference among real numbers
 
 ! access matrix information
 USE globalData,only: ixFullMatrix   ! named variable for the full Jacobian matrix
@@ -213,10 +211,8 @@ subroutine summaSolve4ida(&
   ! --------------------------------------------------------------------------------------------------------------------------------
   type(N_Vector),           pointer :: sunvec_y                               ! sundials solution vector
   type(N_Vector),           pointer :: sunvec_yp                              ! sundials derivative vector
-  type(N_Vector),           pointer :: sunvec_av                              ! sundials tolerance vector
   type(SUNMatrix),          pointer :: sunmat_A                               ! sundials matrix
   type(SUNLinearSolver),    pointer :: sunlinsol_LS                           ! sundials linear solver
-  type(SUNNonLinearSolver), pointer :: sunnonlin_NLS                          ! sundials nonlinear solver
   type(c_ptr)                       :: ida_mem                                ! IDA memory
   type(c_ptr)                       :: sunctx                                 ! SUNDIALS simulation context
   type(data4ida),           target  :: eqns_data                              ! IDA type
@@ -475,15 +471,16 @@ subroutine summaSolve4ida(&
         if (retval /= 0) then; err=20; message=trim(message)//'error in FIDASetRootDirection'; return; endif
       endif
     
-      eqns_data%firstFluxCall = .false. ! already called for initial
-      eqns_data%firstSplitOper = .true. ! always true at start of dt_cur since no splitting
+      eqns_data%firstFluxCall = .false. ! already called for initial data window
+      eqns_data%firstSplitOper = .false. ! already called for initial data window
 
       ! call IDASolve, advance solver just one internal step
       retvalr = FIDASolve(ida_mem, dt_cur, tret, sunvec_y, sunvec_yp, IDA_ONE_STEP)
       ! early return if IDASolve failed
       if( retvalr < 0 )then
         idaSucceeds = .false.
-        call getErrMessage(retvalr,cmessage)
+        if (eqns_data%err/=0)then; message=trim(message)//trim(eqns_data%message); return; endif !fail from summa problem
+        call getErrMessage(retvalr,cmessage) ! fail from solver problem
         message=trim(message)//trim(cmessage)
         !if(retvalr==-1) err = -20 ! max iterations failure, exit and reduce the data window time in varSubStep
         exit
@@ -493,7 +490,7 @@ subroutine summaSolve4ida(&
       ! loop through non-missing energy state variables in the snow domain to see if need to merge
       do concurrent (i=1:nSnow,ixSnowOnlyNrg(i)/=integerMissing)
         if(model_decisions(iLookDECISIONS%nrgConserv)%iDecision.ne.closedForm)then !using enthalpy as state variable
-          if (eqns_data%mLayerTempTrial(i) > Tfreeze .or. stateVec(ixSnowOnlyNrg(i)) > 0._rkind) tooMuchMelt = .true. !need to merge
+          if (stateVec(ixSnowOnlyNrg(i)) > 0._rkind) tooMuchMelt = .true. !need to merge
         else
           if (stateVec(ixSnowOnlyNrg(i)) > Tfreeze) tooMuchMelt = .true. !need to merge
         endif
@@ -504,6 +501,11 @@ subroutine summaSolve4ida(&
       retval = FIDAGetLastStep(ida_mem, dt_last)
       dt_diff = tret(1) - tretPrev
       nSteps = nSteps + 1 ! number of time steps taken in solver
+
+      ! possible that vegetation water may go a bit negative because of discontinous canopy wetting derivatives, so check and correct
+      if(ixVegHyd/=integerMissing)then
+        if(stateVec(ixVegHyd) < 0._rkind .and. stateVec(ixVegHyd)>= -verySmaller*1.e3_rkind) stateVec(ixVegHyd) = 0._rkind ! set to zero
+      endif
     
       ! check the feasibility of the solution
       feasible=.true.

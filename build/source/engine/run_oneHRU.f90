@@ -118,7 +118,7 @@ contains
 
  ! model control
  integer(i4b)      , intent(in)    :: hru_nc              ! hru index in netcdf
- integer(8)        , intent(in)    :: hruId               ! hruId
+ integer(i8b)      , intent(in)    :: hruId               ! hruId
  real(rkind)       , intent(inout) :: dt_init             ! used to initialize the length of the sub-step for each HRU
  logical(lgt)      , intent(inout) :: computeVegFlux      ! flag to indicate if we are computing fluxes over vegetation (false=no, true=yes)
  integer(i4b)      , intent(inout) :: nSnow,nSoil,nLayers ! number of snow and soil layers
@@ -142,16 +142,22 @@ contains
  ! ----- define local variables ------------------------------------------------------------------------------------------
 
  ! local variables
- character(len=256)                :: cmessage            ! error message
+ character(len=256)                   :: cmessage            ! error message
  real(rkind)          , allocatable   :: zSoilReverseSign(:) ! height at bottom of each soil layer, negative downwards (m)
 
  ! initialize error control
- err=0; write(message, '(A21,I0,A10,I0,A2)' ) 'run_oneHRU (hru nc = ',hru_nc -1 ,', hruId = ',hruId,')/' !netcdf index starts with 0 if want to subset
+ err=0; write(message, '(A21,I0,A10,I0,A2)' ) 'run_oneHRU (hru nc = ',hru_nc ,', hruId = ',hruId,')/'
 
  ! ----- hru initialization ---------------------------------------------------------------------------------------------
+ ! initialize the number of flux calls
+ diagData%var(iLookDIAG%numFluxCalls)%dat(1) = 0._rkind
 
  ! water pixel: do nothing
- if (typeData%var(iLookTYPE%vegTypeIndex) == isWater) return
+ if (typeData%var(iLookTYPE%vegTypeIndex) == isWater)then
+  ! Set wall_clock time to zero so it does not get a random value
+   diagData%var(iLookDIAG%wallClockTime)%dat(1) = 0._rkind
+   return
+ endif
 
  ! get height at bottom of each soil layer, negative downwards (used in Noah MP)
  allocate(zSoilReverseSign(nSoil),stat=err)
@@ -206,9 +212,6 @@ contains
  if(err/=0)then; err=20; message=trim(message)//trim(cmessage); return; endif
 
  ! ----- run the model --------------------------------------------------------------------------------------------------
-
- ! initialize the number of flux calls
- diagData%var(iLookDIAG%numFluxCalls)%dat(1) = 0._rkind
 
  ! run the model for a single HRU
  call coupled_em(&

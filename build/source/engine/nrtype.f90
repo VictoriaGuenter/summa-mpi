@@ -2,6 +2,7 @@ MODULE nrtype
  IMPLICIT NONE
  SAVE
  ! data types
+ INTEGER,      PARAMETER :: I8B = SELECTED_INT_KIND(18)
  INTEGER,      PARAMETER :: I4B = SELECTED_INT_KIND(9)
  INTEGER,      PARAMETER :: I2B = SELECTED_INT_KIND(4)
  INTEGER,      PARAMETER :: I1B = SELECTED_INT_KIND(2)
@@ -24,6 +25,6 @@ MODULE nrtype
  real(rkind),     PARAMETER :: TWOPI_D=6.283185307179586476925286766559005768394_rkind
  ! missing values
  real(rkind),     parameter :: nr_quadMissing=-9999._qp   ! missing quadruple precision number
- real(rkind),     parameter :: nr_realMissing=-9999._rkind   ! missing double precision number
+ real(rkind),     parameter :: nr_realMissing=-9999._rkind   ! missing real number
  integer(i4b), parameter :: nr_integerMissing=-9999    ! missing integer
 END MODULE nrtype
